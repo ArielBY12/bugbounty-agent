@@ -1,0 +1,99 @@
+# =============================================================================
+# SCOPE CONFIGURATION — EXAMPLE / TEMPLATE
+# =============================================================================
+# This file is the single source of truth for what this agent is allowed to
+# touch. It is not documentation and not a suggestion — every action the
+# agent takes MUST be checked against this file before it runs.
+#
+# Copy this file to `scope.yaml` (git-ignored) and fill it in with the real,
+# current details of an authorized program before running anything against
+# a live target. Never point the agent at a target without a real program
+# behind this file.
+# =============================================================================
+
+program:
+  # Human-readable program name, exactly as listed on the platform.
+  name: "Example Corp Public Bug Bounty"
+  # Where the program is hosted: hackerone, bugcrowd, intigriti, yeswehack,
+  # self-hosted, etc. Used for audit trail / reporting context only.
+  platform: "hackerone"
+  # Link to the program's official policy page. This is the definitive
+  # authorization document — if scope.yaml and the policy page ever
+  # disagree, the policy page wins and this file must be updated.
+  policy_url: "https://hackerone.com/example-corp/policy"
+
+# -----------------------------------------------------------------------------
+# HARD AUTHORIZATION GATE
+# -----------------------------------------------------------------------------
+# The agent MUST refuse to perform any active/intrusive action if this is not
+# exactly `true`. This is not a convenience toggle — it exists to prevent
+# accidental runs against a target with no active, confirmed authorization
+# (e.g. a stale config left over from an expired or paused program).
+authorized: false
+
+# -----------------------------------------------------------------------------
+# IN SCOPE
+# -----------------------------------------------------------------------------
+# Only assets listed here may be targeted. Be as specific as the program
+# allows. Wildcards should mirror exactly what the program policy permits —
+# do not broaden wildcards "to be safe," that makes them less safe.
+in_scope:
+  domains:
+    - "example.com"
+  # Wildcard subdomain rules. Use explicit wildcard syntax and keep it
+  # aligned 1:1 with what the program's policy page states.
+  subdomains:
+    - "*.example.com"          # covers all subdomains unless excluded below
+    - "api.staging.example.com"
+  ip_ranges:
+    - "203.0.113.0/24"
+
+# -----------------------------------------------------------------------------
+# OUT OF SCOPE
+# -----------------------------------------------------------------------------
+# Explicit exclusions. These ALWAYS win over an in_scope match, even a
+# wildcard match. If a target matches both in_scope and out_of_scope, treat
+# it as out of scope, full stop — never attempt to resolve the conflict in
+# favor of action.
+out_of_scope:
+  domains:
+    - "blog.example.com"
+    - "status.example.com"
+  subdomains: []
+  ip_ranges: []
+  # Anything else the policy explicitly forbids (categories of testing,
+  # specific endpoints, third-party integrations not owned by the program).
+  notes:
+    - "No testing of third-party payment processor endpoints."
+    - "No social engineering, phishing, or physical security testing."
+
+# -----------------------------------------------------------------------------
+# RATE LIMITS
+# -----------------------------------------------------------------------------
+# Conservative by default. These caps exist to keep the target's production
+# systems safe and to stay well inside what the program policy permits.
+# Raise only if the program explicitly allows higher throughput.
+rate_limits:
+  requests_per_second: 1
+  max_concurrency: 1
+
+# -----------------------------------------------------------------------------
+# ACTIVE ACTIONS
+# -----------------------------------------------------------------------------
+# Default false. Any action beyond passive recon/observation (e.g. sending
+# exploit payloads, brute forcing, intrusive scanning) requires this to be
+# explicitly set true AND a human to approve the specific action at runtime.
+# This flag being true does not itself grant blanket permission — it only
+# allows the agent to prompt a human for per-action approval instead of
+# refusing outright.
+active_actions_allowed: false
+
+# -----------------------------------------------------------------------------
+# NOTES
+# -----------------------------------------------------------------------------
+notes: |
+  Only add a target to this file if it has a real, current, authorized bug
+  bounty or pentest program that you (or your organization) are actually
+  enrolled in. An expired, paused, or unconfirmed program is the same as no
+  authorization at all. When in doubt, re-check the policy_url above before
+  running anything.

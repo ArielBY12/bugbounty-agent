@@ -1,0 +1,30 @@
+# Run artifacts — never committed
+findings/
+logs/
+sandbox/
+
+# Real scope config — only the example template is tracked
+config/scope.yaml
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
