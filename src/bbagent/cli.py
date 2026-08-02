@@ -50,16 +50,26 @@ def _render_approval(request: ApprovalRequest) -> None:
 
 @app.command("import")
 def import_cmd(
-    source: str = typer.Argument(..., help="A HackerOne/Bugcrowd program URL, or a saved page/JSON file."),
+    source: str = typer.Argument(..., help="A program URL, a saved JSON, or a Markdown brief file."),
     out: pathlib.Path = typer.Option(pathlib.Path("config/scope.yaml"), help="Where to write the scope draft."),
     name: Optional[str] = typer.Option(None, help="Override the program name."),
+    llm: bool = typer.Option(
+        False, "--llm",
+        help="Let Claude structure an UNSTRUCTURED brief into scope+rules (needs the llm extra + "
+        "ANTHROPIC_API_KEY). Output is still a draft you review; the LLM never sets authority.",
+    ),
 ) -> None:
-    """Derive a scope DRAFT from a program page. Always leaves authorized=false for your review."""
+    """Derive a scope DRAFT (scope + rules as notes) from a program page, JSON, or Markdown brief.
+
+    Always leaves authorized=false for your review. The generic path: save the program's brief to a
+    Markdown file (front-matter + `## In scope` / `## Out of scope` / `## Rules` sections; see
+    `config/brief.example.md`) and run `bbagent import <file>` — or add `--llm` to structure raw prose.
+    """
     try:
         if source.startswith("http://") or source.startswith("https://"):
             config = import_from_url(source, fetch=http_get, program_name=name)
         else:
-            config = import_from_file(source, program_name=name)
+            config = import_from_file(source, program_name=name, use_llm=llm)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Import failed:[/] {exc}")
         raise typer.Exit(code=1)

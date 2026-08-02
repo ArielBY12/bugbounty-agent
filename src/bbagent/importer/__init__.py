@@ -9,17 +9,25 @@ draft immediately, since passive OSINT makes zero target contact.
 from bbagent.importer.core import (
     ImportError_,
     ScopeDraft,
+    import_brief,
     import_from_file,
     import_from_url,
+    looks_like_brief,
+    parse_brief,
     parse_bugcrowd,
     parse_hackerone,
+    structure_brief_with_llm,
 )
 
 __all__ = [
     "ImportError_",
     "ScopeDraft",
+    "import_brief",
     "import_from_file",
     "import_from_url",
+    "looks_like_brief",
+    "parse_brief",
     "parse_bugcrowd",
     "parse_hackerone",
+    "structure_brief_with_llm",
 ]

@@ -11,8 +11,10 @@ import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlsplit
+
+import yaml
 
 from bbagent.scope.canonical import CanonicalizationError, canonical_host
 from bbagent.scope.matcher import registrable_domain
@@ -98,11 +100,26 @@ class ScopeDraft:
     def is_empty(self) -> bool:
         return not (self.in_domains or self.in_subdomains or self.in_ips)
 
-    def to_scope_config(self, program_name: str, platform: str, policy_url: Optional[str]) -> ScopeConfig:
+    def to_scope_config(
+        self,
+        program_name: str,
+        platform: str,
+        policy_url: Optional[str],
+        *,
+        authorized_until: Optional[str] = None,
+        last_verified_at: Optional[str] = None,
+        rate_limits: Optional[RateLimits] = None,
+    ) -> ScopeConfig:
         if self.is_empty():
             raise ImportError_("no in-scope assets were derived — refusing to build an empty scope")
         return ScopeConfig(
-            program=ProgramInfo(name=program_name, platform=platform, policy_url=policy_url),
+            program=ProgramInfo(
+                name=program_name,
+                platform=platform,
+                policy_url=policy_url,
+                authorized_until=authorized_until,
+                last_verified_at=last_verified_at,
+            ),
             authorized=False,  # a human MUST confirm before any active step
             active_actions_allowed=False,
             in_scope=InScope(
@@ -117,7 +134,8 @@ class ScopeDraft:
                 ip_ranges=sorted(self.out_ips),
                 notes=self.notes,
             ),
-            rate_limits=RateLimits(requests_per_second=1, max_concurrency=1),
+            # Conservative default; a brief may lower it further but the importer never raises it.
+            rate_limits=rate_limits or RateLimits(requests_per_second=1, max_concurrency=1),
             notes=self._notes_text(),
         )
 
@@ -277,6 +295,156 @@ def _parse_html_best_effort(text: str) -> ScopeDraft:
     return draft
 
 
+# ---- generic Markdown "brief" importer --------------------------------------------------
+# One reusable format for ANY program: optional YAML front-matter (program meta + rate) plus
+# ``##`` sections. Host sections contribute scope; rule/note sections are captured verbatim into
+# out_of_scope.notes so every human instruction survives into the approval prompt. Deterministic
+# and fail-closed — prose that contains no host is never mistaken for a target.
+
+_FRONTMATTER_RE = re.compile(r"^﻿?---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
+# Leading list bullets / ordered markers / table pipes we strip before storing a note.
+_NOTE_BULLET_RE = re.compile(r"^\s*(?:[-*+•·]|\d+[.)])\s+")
+_TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}.*$")
+
+
+def _parse_frontmatter(text: str) -> Tuple[Dict, str]:
+    """Split an optional leading ``---`` YAML block. Returns (meta, body). yaml.safe_load only."""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return {}, text
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return meta, text[m.end():]
+
+
+def _classify_section(heading: str) -> Optional[str]:
+    """Map a heading to 'in' (in-scope hosts), 'out' (excluded hosts), 'notes' (prose rules)."""
+    h = heading.lower()
+    if any(k in h for k in ("out of scope", "out-of-scope", "outofscope", "not in scope", "excluded targets")):
+        return "out"
+    if any(k in h for k in ("in scope", "in-scope", "targets", "assets", "domains", "scope")):
+        return "in"
+    if any(
+        k in h
+        for k in (
+            "rule", "note", "guideline", "expectation", "prohibit", "exclusion", "focus",
+            "reward", "disclosure", "reporting", "known issue", "things to know", "safe harbor",
+            "instruction", "policy", "restriction",
+        )
+    ):
+        return "notes"
+    return None
+
+
+def _clean_note(line: str) -> str:
+    line = _NOTE_BULLET_RE.sub("", line.strip())
+    if "|" in line:  # collapse a table row to its cell text
+        line = " ".join(c.strip() for c in line.split("|") if c.strip())
+    return line.strip()
+
+
+# A line is a HOST ENTRY only if the WHOLE line (minus a leading bullet) is one host / URL / CIDR.
+# A prose sentence that merely mentions an in-scope host must NEVER be parsed as a target — that is
+# how an out-of-scope paragraph could otherwise poison the apex into out_of_scope. Sentences with
+# spaces fall through to notes instead.
+_HOST_ENTRY_RE = re.compile(
+    r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?:/\S*)?$",
+    re.IGNORECASE,
+)
+
+
+def _host_entry(line: str) -> Optional[str]:
+    token = _NOTE_BULLET_RE.sub("", line.strip())
+    if not token or " " in token or "\t" in token:
+        return None
+    if _looks_like_cidr(token) or _looks_like_ip(token):
+        return token
+    return token if _HOST_ENTRY_RE.match(token) else None
+
+
+def parse_brief(text: str) -> ScopeDraft:
+    """Parse a sectioned Markdown brief into a ScopeDraft (hosts + captured instruction notes)."""
+    draft = ScopeDraft()
+    seen_notes: Set[str] = set()
+    section: Optional[str] = None
+
+    def add_note(raw: str) -> None:
+        note = _clean_note(raw)
+        if len(note) < 4 or _TABLE_SEP_RE.match(raw):
+            return
+        key = note.lower()
+        if key in seen_notes or len(draft.notes) >= 80:
+            return
+        seen_notes.add(key)
+        draft.notes.append(note[:400])
+
+    for line in text.splitlines():
+        heading = _HEADING_RE.match(line)
+        if heading:
+            section = _classify_section(heading.group(2))
+            continue
+        if not line.strip() or section is None:
+            continue
+        entry = _host_entry(line)
+        if section in ("in", "out") and entry is not None:
+            draft.add(entry, in_scope=(section == "in"))
+        elif section in ("out", "notes"):
+            # A prose line in an exclusion / rules section is a human-read instruction.
+            add_note(line)
+    return draft
+
+
+def looks_like_brief(text: str) -> bool:
+    """True if the text has YAML front-matter, or a classifiable ``##`` (level ≥2) section.
+
+    A single ``#`` line is treated as a plaintext comment, not a heading, so one-host-per-line
+    scope files (which use ``#`` comments and ``!`` exclusions) stay on the plaintext path.
+    """
+    meta, body = _parse_frontmatter(text)
+    if meta:
+        return True
+    for line in body.splitlines():
+        m = _HEADING_RE.match(line)
+        if m and len(m.group(1)) >= 2 and _classify_section(m.group(2)) is not None:
+            return True
+    return False
+
+
+def _rate_from_meta(meta: Dict) -> Optional[RateLimits]:
+    rps = meta.get("requests_per_second") or meta.get("rps")
+    conc = meta.get("max_concurrency") or meta.get("concurrency")
+    if rps is None and conc is None:
+        return None
+    try:
+        return RateLimits(
+            requests_per_second=float(rps) if rps is not None else 1.0,
+            max_concurrency=int(conc) if conc is not None else 1,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def import_brief(text: str, program_name: Optional[str] = None) -> ScopeConfig:
+    """Full brief -> ScopeConfig: front-matter meta + sectioned hosts + captured notes."""
+    meta, body = _parse_frontmatter(text)
+    draft = parse_brief(body)
+    name = program_name or meta.get("program") or meta.get("name") or "Imported Program"
+    platform = str(meta.get("platform", "other")).lower()
+    return draft.to_scope_config(
+        program_name=str(name),
+        platform=platform,
+        policy_url=meta.get("policy_url") or meta.get("policy"),
+        authorized_until=meta.get("authorized_until"),
+        last_verified_at=meta.get("last_verified_at"),
+        rate_limits=_rate_from_meta(meta),
+    )
+
+
 def _sniff_and_parse(text: str, platform_hint: str = "") -> ScopeDraft:
     text = text.strip()
     if text[:1] in ("{", "["):
@@ -305,17 +473,70 @@ def _platform_of(url: str) -> str:
     return "other"
 
 
-def import_from_file(path: str, program_name: Optional[str] = None) -> ScopeConfig:
+def import_from_file(path: str, program_name: Optional[str] = None, use_llm: bool = False) -> ScopeConfig:
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
+    if use_llm:
+        text = structure_brief_with_llm(text)  # raw prose -> a clean sectioned brief
+    if looks_like_brief(text):
+        return import_brief(text, program_name)
     draft = _sniff_and_parse(text)
     return draft.to_scope_config(program_name or "Imported Program", "other", None)
+
+
+_LLM_BRIEF_SYSTEM = (
+    "You convert a bug-bounty / pentest program brief into a STRICT Markdown template. Output ONLY "
+    "the template, no commentary. Format:\n"
+    "---\nprogram: <name>\nplatform: <hackerone|bugcrowd|intigriti|yeswehack|self-hosted|other>\n"
+    "policy_url: <url or omit>\n---\n"
+    "## In scope\n<one host/domain/CIDR per line; keep wildcards like *.example.com; no paths>\n"
+    "## Out of scope\n<one excluded host per line; then any prose exclusion rules, one per line>\n"
+    "## Rules\n<every operating rule, required header, email format, rate-limit and prohibited-activity "
+    "instruction, one concise line each — copy them faithfully, do not summarize away specifics>\n"
+    "Never invent hosts. If a host is not clearly in the brief, do not list it."
+)
+
+
+def structure_brief_with_llm(raw_text: str, model: Optional[str] = None) -> str:
+    """Use Claude to turn an unstructured brief into the deterministic template above.
+
+    The output is still parsed by the deterministic importer and still yields a DRAFT
+    (authorized=false) for human review — the LLM never sets authority. Requires the ``llm`` extra
+    (``pip install -e '.[llm]'``) and ``ANTHROPIC_API_KEY``.
+    """
+    import os
+
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover - depends on optional extra
+        raise ImportError_("--llm needs the 'anthropic' package: pip install -e '.[llm]'") from exc
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise ImportError_("--llm needs ANTHROPIC_API_KEY in the environment")
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model=model or os.environ.get("BBAGENT_LLM_MODEL", "claude-sonnet-4-6"),
+        max_tokens=2000,
+        system=_LLM_BRIEF_SYSTEM,
+        messages=[{"role": "user", "content": raw_text[:120000]}],
+    )
+    out = "".join(getattr(b, "text", "") for b in resp.content).strip()
+    if out.startswith("```"):
+        out = out.split("```", 2)[1].lstrip("markdown").lstrip("md").strip()
+    if not looks_like_brief(out):
+        raise ImportError_("LLM did not return a parseable brief template — refusing to guess")
+    return out
 
 
 def import_from_url(url: str, fetch: Callable[[str], str], program_name: Optional[str] = None) -> ScopeConfig:
     """Fetch a program page/JSON and derive a scope draft (authorized stays false)."""
     platform = _platform_of(url)
     text = fetch(url)
-    draft = _sniff_and_parse(text, platform)
     handle = (urlsplit(url).path.strip("/").split("/") or ["program"])[0] or "program"
+    if looks_like_brief(text):
+        cfg = import_brief(text, program_name or f"{platform}:{handle}")
+        # keep the fetched URL as the policy_url if the brief did not carry one
+        if cfg.program.policy_url is None:
+            cfg = cfg.model_copy(update={"program": cfg.program.model_copy(update={"policy_url": url})})
+        return cfg
+    draft = _sniff_and_parse(text, platform)
     return draft.to_scope_config(program_name or f"{platform}:{handle}", platform, url)
