@@ -87,3 +87,76 @@ def default_passive_sources(fetch: FetchFn = http_get) -> List[PassiveSource]:
     if sub.available:
         sources.append(sub)
     return sources
+
+
+# ---- passive URL / content sources (archives; zero target contact) ----------------------
+
+class UrlSource(Protocol):
+    name: str
+
+    def urls(self, domain: str) -> List[str]:
+        ...
+
+
+class WaybackSource:
+    """Historical URLs for a domain (and its subdomains) from the Wayback CDX API. Passive."""
+
+    name = "wayback"
+
+    def __init__(self, fetch: FetchFn = http_get, limit: int = 5000) -> None:
+        self.fetch = fetch
+        self.limit = limit
+
+    def urls(self, domain: str) -> List[str]:
+        api = (
+            "https://web.archive.org/cdx/search/cdx?"
+            f"url=*.{domain}/*&output=text&fl=original&collapse=urlkey&limit={self.limit}"
+        )
+        try:
+            raw = self.fetch(api)
+        except Exception:
+            return []
+        out = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("http"):
+                out.append(line)
+        return out
+
+
+class GauSource:
+    """Historical URLs via the `gau` tool (if installed). Passive (queries archives)."""
+
+    name = "gau"
+
+    def __init__(self, binary: str = "gau", runner=None) -> None:
+        self.binary = binary
+        self._runner = runner
+
+    @property
+    def available(self) -> bool:
+        return self._runner is not None or shutil.which(self.binary) is not None
+
+    def urls(self, domain: str) -> List[str]:
+        if not self.available:
+            return []
+        argv = [self.binary, "--subs", domain]
+        try:
+            if self._runner is not None:
+                stdout = self._runner(argv)
+            else:
+                stdout = subprocess.run(  # noqa: S603
+                    argv, capture_output=True, text=True, timeout=300, shell=False
+                ).stdout
+        except Exception:
+            return []
+        return [l.strip() for l in stdout.splitlines() if l.strip().startswith("http")]
+
+
+def default_url_sources(fetch: FetchFn = http_get) -> List[UrlSource]:
+    """Wayback always (built-in); gau if installed."""
+    sources: List[UrlSource] = [WaybackSource(fetch=fetch)]
+    gau = GauSource()
+    if gau.available:
+        sources.append(gau)
+    return sources

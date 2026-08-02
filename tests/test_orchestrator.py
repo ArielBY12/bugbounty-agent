@@ -29,9 +29,20 @@ def _source():
     ]})
 
 
-def _orch(config, tmp_path, **kw):
+class FakeUrls:
+    name = "fakeurls"
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def urls(self, domain):
+        return self.mapping.get(domain, [])
+
+
+def _orch(config, tmp_path, url_sources=None, **kw):
     return Orchestrator(
         config, tmp_path / "eng", passive_sources=[_source()],
+        url_sources=url_sources if url_sources is not None else [],  # no network in tests
         governor=_fast_governor(), **kw,
     )
 
@@ -79,6 +90,24 @@ def test_full_mode_probes_when_approved(scope_config, tmp_path):
     assert summary.probed == 2
     assert summary.live_hosts == 1
     assert orch.store.audit.verify_chain() is True
+
+
+def test_recon_ingests_urls_and_builds_focus_map(scope_config, tmp_path):
+    urls = FakeUrls({"example.com": [
+        "https://admin.example.com/.git/config",   # in-scope, high-value path
+        "https://api.example.com/graphql",         # in-scope
+        "https://blog.example.com/post",           # out-of-scope host -> ignored
+        "https://evil.com/x",                      # unverified -> ignored
+    ]})
+    orch = _orch(scope_config, tmp_path, url_sources=[urls])
+    summary = orch.run(mode="recon", analyze=True)
+    assert summary.urls == 2  # only the two in-scope URLs stored
+    assert summary.report_path and (tmp_path / "eng" / "focus-map.md").exists()
+    md = (tmp_path / "eng" / "focus-map.md").read_text()
+    assert "Focus map" in md
+    # admin host with an exposed .git path should rank at/near the top.
+    assert summary.focus_top[0][0] == "admin.example.com"
+    assert ".git" in md
 
 
 def test_full_mode_denies_probe_on_private_resolution(scope_config, tmp_path):

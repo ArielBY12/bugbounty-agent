@@ -127,6 +127,48 @@ def run(
     _run(scope, "full", out, approval=provider)
 
 
+@app.command("map")
+def map_cmd(
+    scope: pathlib.Path = typer.Option(pathlib.Path("config/scope.yaml"), help="Path to scope.yaml."),
+    out: Optional[pathlib.Path] = typer.Option(None, help="Findings store directory."),
+    active: bool = typer.Option(False, "--active", "-a", help="Also run gated active liveness (if authorized)."),
+    llm: bool = typer.Option(False, help="Add LLM hypotheses (needs anthropic + ANTHROPIC_API_KEY)."),
+) -> None:
+    """Recon (+ optional active), then rank the attack surface into a prioritized FOCUS MAP."""
+    config = _load(scope)
+    out = out or pathlib.Path("findings") / _slug(config.program.name)
+    reasoner = None
+    if llm:
+        from bbagent.reason.anthropic_reasoner import AnthropicReasoner
+
+        if AnthropicReasoner.available():
+            reasoner = AnthropicReasoner()
+        else:
+            console.print("[yellow]--llm: no anthropic/ANTHROPIC_API_KEY — using deterministic hypotheses.[/]")
+    if reasoner is None:
+        from bbagent.reason import DeterministicReasoner
+
+        reasoner = DeterministicReasoner()
+    provider = CLIApprovalProvider(render=_render_approval) if active else None
+    orch = Orchestrator(config, out, reasoner=reasoner, approval_provider=provider)
+    console.print(f"[cyan]Mapping[/] {config.program.name} (active={active})  →  {out}")
+    summary = orch.run(mode="full" if active else "recon", analyze=True)
+    orch.close()
+    console.print(Panel(summary.line(), title="result", border_style="cyan"))
+    if summary.focus_top:
+        table = Table(title="Top focus (open focus-map.md for the full ranked map + next steps)")
+        table.add_column("#", justify="right")
+        table.add_column("host")
+        table.add_column("tier")
+        table.add_column("score", justify="right")
+        for i, (host, tier, score) in enumerate(summary.focus_top, 1):
+            color = {"critical": "red", "high": "yellow", "medium": "white"}.get(tier, "dim")
+            table.add_row(str(i), host, f"[{color}]{tier}[/]", str(score))
+        console.print(table)
+    for msg in summary.messages:
+        console.print(f"  • {msg}")
+
+
 @app.command("verify-scope")
 def verify_scope(
     scope: pathlib.Path = typer.Argument(pathlib.Path("config/scope.yaml")),

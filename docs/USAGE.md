@@ -75,13 +75,30 @@ bbagent run   --scope config/scope.yaml              # identical full pipeline
 If the scope is not authorized, or you decline the prompt, the run **halts after recon** and
 nothing is sent to the target. So `recon --active` on an unauthorized scope == plain passive recon.
 
+### The focus map — "where do I look first?"
+
+```bash
+bbagent map --scope config/scope.yaml              # passive recon -> ranked focus map
+bbagent map --scope config/scope.yaml --active     # + gated liveness (if authorized)
+bbagent map --scope config/scope.yaml --llm        # + LLM hypotheses (needs ANTHROPIC_API_KEY)
+```
+
+`map` runs recon (subdomains from crt.sh/subfinder **and** archived URLs from Wayback/gau), then
+**ranks every in-scope host** by attack-surface signals — subdomain naming (`admin`, `dev`,
+`internal`, `jenkins`, `git`, `graphql`…), live status (401/403/500), server/tech, and exposed
+paths (`/.git/`, `/.env`, `/actuator/env`, `/swagger`, sensitive file extensions). It writes
+`findings/<program>/focus-map.md`: hosts grouped into 🔴 critical / 🟠 high / 🟡 medium, each with
+**why** it ranked and **non-destructive next steps** (and optional LLM hypotheses). This is the
+"start here" map — it does the tedious triage so your human creativity goes to the interesting hosts.
+
 ---
 
 ## 3. What each mode does
 
 | Mode | Phase | Contact | Gate |
 |---|---|---|---|
-| `recon` | passive OSINT (crt.sh CT logs; subfinder if installed) | **zero** target contact | scope re-check per discovered host |
+| `recon` | passive OSINT: subdomains (crt.sh CT; subfinder) + archived URLs (Wayback; gau) | **zero** target contact | scope re-check per discovered host/URL |
+| `map` | recon (+ `--active`), then rank into a prioritized focus map | passive (or gated active) | same gates; scoring/reasoning make zero contact |
 | `run` (full) | recon, then liveness enumeration (built-in HEAD probe) | active | `authorized` + `active_actions_allowed` + **per-action approval** + resolve-and-pin + private/boundary IP check |
 
 The liveness probe is **built in** (a single `HEAD` to the pinned IP, no redirects) so the kernel
@@ -127,8 +144,10 @@ the exact scope decision that permitted it.
 
 - **crt.sh / network:** recon needs outbound HTTPS to crt.sh; in a restricted network it returns
   nothing (fails closed) rather than erroring.
-- **External active tools** (nuclei/naabu/ffuf) are specified and gated but not yet wired to a
-  hardened egress sandbox. The built-in liveness probe is the safe active step that ships working.
+- **nuclei** has a safe-profile planner (`bbagent.tools.external.NucleiPlanner`) that builds the
+  exact gated command and **refuses to spawn** unless egress is verified
+  (`BBAGENT_EGRESS_VERIFIED=1` in a real Linux netns/nftables sandbox). Until you wire that sandbox
+  it is dry-run only. The built-in liveness probe is the safe active step that ships working.
 - **Authenticated scanning** (cookies/tokens/logged-in flows) is **not** implemented — this is
   unauthenticated recon/enumeration only.
 - **Scope nuance:** natural-language `out_of_scope.notes` (e.g. "no payment endpoints") are surfaced
@@ -144,6 +163,8 @@ bbagent import <url|file> --out config/scope.yaml
 bbagent verify-scope config/scope.yaml --atom target.acme.com
 bbagent recon --scope config/scope.yaml            # passive
 bbagent recon --scope config/scope.yaml --active   # + gated active enum (if authorized)
+bbagent map   --scope config/scope.yaml            # -> ranked focus-map.md (where to look first)
+bbagent map   --scope config/scope.yaml --active   # + gated liveness; --llm for hypotheses
 bbagent run   --scope config/scope.yaml            # same full pipeline
 pytest -q                                          # run the test suite
 ```

@@ -124,6 +124,10 @@ class FindingsStore:
     def count_assets(self, **kw) -> int:
         return len(self.select_assets(**kw))
 
+    def asset_exists(self, identity_key: str) -> bool:
+        row = self.db.execute("SELECT 1 FROM asset WHERE identity_key=?", (identity_key,)).fetchone()
+        return row is not None
+
     # ---- findings -----------------------------------------------------------------------
 
     def record_finding(self, finding: Finding) -> int:
