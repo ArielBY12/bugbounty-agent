@@ -21,6 +21,13 @@ program:
   # authorization document — if scope.yaml and the policy page ever
   # disagree, the policy page wins and this file must be updated.
   policy_url: "https://hackerone.com/example-corp/policy"
+  # Staleness guard. A paused, expired, or unverified program is the same as
+  # no authorization. The gate auto-HALTs when `authorized_until` is in the
+  # past, or when `last_verified_at` is older than the configured max age.
+  # Both are optional; leave unset only if you accept no automatic staleness
+  # protection. Dates are ISO-8601 (YYYY-MM-DD).
+  authorized_until: "2026-12-31"   # last date this authorization is known valid
+  last_verified_at: "2026-07-08"   # date you last re-checked policy_url
 
 # -----------------------------------------------------------------------------
 # HARD AUTHORIZATION GATE
@@ -49,7 +56,19 @@ in_scope:
     - "203.0.113.0/24"
 
 # -----------------------------------------------------------------------------
-# OUT OF SCOPE
+# SCOPE SEMANTICS
+# -----------------------------------------------------------------------------
+# How the in_scope dimensions relate to each other. Default is the stricter
+# reading and should only be loosened if the program policy is explicit.
+scope_semantics:
+  # How `in_scope.ip_ranges` is interpreted:
+  #   boundary   — an in-scope HOSTNAME must ALSO resolve into an in_scope
+  #                ip_range to be actionable (name AND ip must both be in scope).
+  #                Safest: a hostname pointing at surprise infrastructure is denied.
+  #   additional — ip_ranges is a separate allow-set ADDED to the domain list;
+  #                a name in scope is fine regardless of its resolved IP (still
+  #                subject to the hardcoded private/internal-IP deny).
+  ip_ranges_mode: "boundary"
 # -----------------------------------------------------------------------------
 # Explicit exclusions. These ALWAYS win over an in_scope match, even a
 # wildcard match. If a target matches both in_scope and out_of_scope, treat

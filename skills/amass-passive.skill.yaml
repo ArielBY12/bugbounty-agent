@@ -1,0 +1,34 @@
+name: amass-passive
+description: Passive DNS enumeration of in-scope domains via amass's passive sources.
+phase: recon
+classification: passive          # matches tools.yaml: amass = passive
+wraps_tool: amass
+owner_agent: recon
+
+inputs:
+  reads: "assets WHERE kind=domain AND scope_status=in_scope"
+  target_kind: [domain]
+  params:
+    max_time_seconds: 300
+
+outputs:
+  writes: "assets(kind=subdomain, status=new, source=amass, scope_status=<computed>, resolve_state=pending)"
+
+authorization:
+  requires_authorized: false        # zero target contact — passive mode only
+  requires_active_approval: false
+  requires_passive_baseline: false
+
+scope_check:
+  - Every seed domain must match in_scope and not out_of_scope; else DENY_HALT.
+  - No target contact — amass runs strictly in passive mode.
+  - Discovered names are re-scoped on write.
+
+non_destructive_guarantees:
+  - Forced `-passive`; `-active`, `-brute`, `-ip` forbidden by the tool manifest.
+  - Complements subdomain-enum with additional passive sources; no resolution of target infra.
+
+tests:
+  - mock amass output -> asserts assets(kind=subdomain, source=amass).
+  - out_of_scope seed -> DENY_HALT.
+  - asserts `-passive` present and `-active`/`-brute` absent in argv.

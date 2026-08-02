@@ -1,0 +1,39 @@
+name: crawl
+description: Depth-capped, scope-restricted crawl of live in-scope web hosts to discover endpoints.
+phase: enumeration
+classification: active           # matches tools.yaml: katana = active
+wraps_tool: katana
+owner_agent: enumeration
+
+inputs:
+  reads: "assets WHERE kind=url AND scope_status=in_scope AND probe_state=live"
+  target_kind: [url]
+  params:
+    depth: 3                       # capped
+    js_crawl: false
+
+outputs:
+  writes: "assets(kind=endpoint, status=new, source=crawl, scope_status=<computed>)"
+
+authorization:
+  requires_authorized: true
+  requires_active_approval: true
+  requires_passive_baseline: true
+
+scope_check:
+  - Every seed URL re-validated — out_of_scope wins; unverified ⇒ DENY_HALT.
+  - Crawl is field-scope restricted to the in-scope host; off-scope hosts are the primary risk
+    and are blocked by the egress ACL and by re-gating every newly discovered host before follow.
+  - Resolved IP pinned; private/internal/metadata IPs hard-denied.
+  - Egress ACL verified active before spawn.
+
+non_destructive_guarantees:
+  - Depth-capped; out-of-scope crawl/emit flags forbidden by the tool manifest.
+  - Discovered endpoints are stored and re-scoped; contacting them is a later gated action.
+  - Rate from the single global governor.
+
+tests:
+  - mock katana output -> asserts endpoint rows with per-host scope_status.
+  - an out-of-scope link discovered mid-crawl -> stored out_of_scope, never re-crawled/probed.
+  - out_of_scope seed -> DENY_HALT.
+  - asserts depth cap in argv and out-of-scope-follow flags absent.

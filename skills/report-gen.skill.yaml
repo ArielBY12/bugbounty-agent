@@ -1,0 +1,36 @@
+name: report-gen
+description: Synthesize confirmed findings into a disclosure report for the program owner.
+phase: reporting
+classification: none             # LLM writing + store reads — ZERO target contact
+wraps_tool: null
+owner_agent: reporting
+
+inputs:
+  reads: "findings WHERE status=validated ; joined assets + evidence + provenance"
+  target_kind: []
+  params:
+    format: markdown              # markdown | pdf (rendered locally, offline)
+    include_provenance: true
+
+outputs:
+  writes: "findings/<program-handle>/reports/<run_id>-report.{md,pdf}"
+
+authorization:
+  requires_authorized: false        # no target contact
+  requires_active_approval: false
+  requires_passive_baseline: false
+
+scope_check:
+  - Reads confirmed findings only; produces a local file. No network, no target contact.
+  - Only in_scope, human-validated findings are eligible for inclusion.
+
+non_destructive_guarantees:
+  - Never contacts the target and never transmits the report anywhere — submission to the program
+    is a deliberate human action outside this framework (responsible disclosure stays human-driven).
+  - Includes redacted evidence + full provenance (tool, scope decision, approval, audit hash) so
+    each claim is traceable; no raw user data is embedded.
+
+tests:
+  - confirmed findings -> asserts a report file with per-finding provenance and redacted evidence.
+  - a still-candidate (unvalidated) finding -> asserts it is excluded from the report.
+  - asserts the skill performs no network call and writes only under findings/<program>/reports/.

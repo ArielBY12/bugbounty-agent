@@ -1,0 +1,40 @@
+name: vuln-scan
+description: Run bounded, non-destructive nuclei templates against enriched in-scope endpoints.
+phase: discovery
+classification: active           # matches tools.yaml: nuclei = active
+wraps_tool: nuclei
+owner_agent: vuln-discovery
+
+inputs:
+  reads: "assets WHERE kind IN (url,endpoint) AND scope_status=in_scope AND probe_state=live"
+  target_kind: [url, endpoint]
+  params:
+    # LLM may propose tags; they are intersected with the manifest tag_allowlist AFTER exclusions.
+    tags: [cve, misconfiguration, exposure, tech]
+    severity: [low, medium, high, critical]
+
+outputs:
+  writes: "findings(status=candidate, source=nuclei, template_id, matched_at, severity, scope_decision_id)"
+
+authorization:
+  requires_authorized: true
+  requires_active_approval: true    # approval shows the exact template/tag set + targets
+  requires_passive_baseline: true
+
+scope_check:
+  - Every target URL/endpoint re-validated — out_of_scope wins; unverified ⇒ DENY_HALT.
+  - Resolved IP pinned; private/internal/metadata IPs hard-denied.
+  - Redirects disabled; a Location host is re-gated as a new action.
+  - Egress ACL verified active before spawn.
+
+non_destructive_guarantees:
+  - Template set bounded by the positive tag_allowlist (real ceiling); dos/intrusive/fuzzing/
+    brute-force excluded; `-dast` and `-include-tags`/`-fuzz`/`-payload`/`-code`/`-headless` forbidden.
+  - OOB/interactsh OFF (`-no-interactsh`) — no callbacks to third-party infrastructure.
+  - Read-only checks only; no weaponized exploitation. Rate from the single global governor.
+
+tests:
+  - mock nuclei jsonl -> asserts candidate findings with template_id + scope_decision_id (NOT NULL).
+  - LLM-proposed tag `rce` -> intersected out (not in allowlist), asserts it is dropped.
+  - out_of_scope target -> DENY_HALT; `-interactsh-url` requested -> refused.
+  - asserts exclude-tags + `-no-interactsh` present and forbidden flags absent in argv.

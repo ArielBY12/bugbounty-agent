@@ -1,0 +1,37 @@
+name: subdomain-enum
+description: Discover subdomains of in-scope domains via passive OSINT sources (incl. CT logs).
+phase: recon
+classification: passive          # matches tools.yaml: subfinder = passive
+wraps_tool: subfinder
+owner_agent: recon
+
+inputs:
+  reads: "assets WHERE kind=domain AND scope_status=in_scope"
+  target_kind: [domain]
+  params:
+    # Bounded, LLM-influenceable. Sources stay on the safe passive default set (no `-all`).
+    max_time_seconds: 300
+
+outputs:
+  writes: "assets(kind=subdomain, status=new, source=subfinder, scope_status=<computed>, resolve_state=pending)"
+  # scope_status is computed at write time; out-of-scope discoveries are stored but NOT actioned.
+
+authorization:
+  requires_authorized: false        # zero target contact — queries third-party OSINT only
+  requires_active_approval: false
+  requires_passive_baseline: false
+
+scope_check:
+  - Every seed domain must match in_scope and not out_of_scope (out-of-scope wins); else DENY_HALT.
+  - No packet is sent to target infrastructure — only third-party passive sources are queried.
+  - Discovered subdomains are re-scoped on write; only in_scope ones become actionable downstream.
+
+non_destructive_guarantees:
+  - Passive sources only; subfinder does not resolve or brute-force the target.
+  - Heavier/slower sources (`-all`) are forbidden by the tool manifest.
+  - Read-only OSINT; nothing is sent to the program's assets.
+
+tests:
+  - mock subfinder stdout -> asserts assets(kind=subdomain) rows with source=subfinder.
+  - seed domain that is out_of_scope -> asserts DENY_HALT (never queried).
+  - asserts forced `-silent` present and `-all` absent in the built argv.

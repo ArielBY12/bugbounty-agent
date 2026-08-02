@@ -1,0 +1,38 @@
+name: triage
+description: Dedup, correlate, and confirm candidate findings; assign severity and confidence.
+phase: triage
+classification: none             # LLM reasoning + store ops — ZERO target contact
+wraps_tool: null
+owner_agent: triage
+
+inputs:
+  reads: "findings WHERE status=candidate ; joined assets + evidence + provenance"
+  target_kind: []                 # operates on stored data, not live targets
+  params:
+    severity_model: cvss-guided
+
+outputs:
+  writes: "findings(status=validated|dismissed|duplicate, triage_state, severity, confidence, dedup_of)"
+
+authorization:
+  requires_authorized: false        # no target contact
+  requires_active_approval: false
+  requires_passive_baseline: false
+
+scope_check:
+  - Reads only; writes only triage state. No argv, no spawn, no network.
+  - Any confirming re-probe is NOT part of this skill. Triage RAISES a re-probe request; the
+    orchestrator re-runs the gated read-only active probe (GET/HEAD) under a FRESH, higher-tier
+    approval token. Triage itself never spawns, never contacts the target, and never holds a token.
+  - A finding whose asset became out_of_scope since discovery is re-marked out_of_scope, not validated.
+
+non_destructive_guarantees:
+  - This skill never contacts the target; it only reasons over the findings store.
+  - Confirmation re-probes are read-only (GET/HEAD) and separately approved; state-changing verbs
+    (POST/PUT/PATCH/DELETE) are never issued for confirmation.
+  - Evidence stays redacted-by-default; no bulk user data is pulled in to "prove" a finding.
+
+tests:
+  - two candidate findings with same dedup_key -> one validated, one marked duplicate/dedup_of.
+  - a candidate on a now-out_of_scope asset -> re-marked out_of_scope, not validated.
+  - asserts the skill performs no subprocess/network call (pure store operation).
