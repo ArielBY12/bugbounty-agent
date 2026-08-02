@@ -1,0 +1,141 @@
+# =============================================================================
+# TOOL MANIFESTS — EXAMPLE / TEMPLATE
+# =============================================================================
+# This file is SAFETY POLICY, not configuration convenience. It declares, for
+# every real tool the agent may orchestrate:
+#   - its classification (passive = ZERO target contact, or active),
+#   - where its targets live (so the scope-gate can extract and validate them),
+#   - the flags the kernel FORCES on every run (defense-in-depth),
+#   - the flags that are FORBIDDEN (a run requesting one is refused),
+#   - the extra flags the LLM is allowed to influence (default: none).
+#
+# It is TRACKED and CODE-REVIEWED. `tools.yaml` (the active copy) is derived
+# from this file; unlike `scope.yaml` it is not target-specific, so it stays in
+# version control. Classification here is AUTHORITATIVE — it is never derived
+# from LLM output. An unknown tool, or a target source not declared here, is
+# treated as active and fail-closed (refused).
+#
+# `target_params[].kind` tells the extractor how to read each target position:
+#   domain_list | host_or_cidr_list | url_list | wordlist_ref
+# Target-list files and stdin carry DATA (the agent supplies list contents, the
+# kernel writes the vetted temp file). An agent-supplied -l/-iL/-w PATH is refused.
+#
+# LOAD-BEARING vs DEFENSE-IN-DEPTH. The real guards are: (1) the kernel builds argv
+# and the LLM may only influence flags in the CLOSED `allowed_extra_flags` list;
+# (2) `forbidden_flags`; (3) the egress ACL. A `forced` `-x=false` is defense-in-
+# depth only — a default may already be safe, and flag NAMES DIFFER ACROSS TOOL
+# VERSIONS. The exact flag strings below are ILLUSTRATIVE: a CI check MUST assert
+# every forced/forbidden flag is accepted by the pinned tool version before use, so
+# a version bump cannot silently turn a guarantee into a no-op. Verify with `<tool> -h`.
+# =============================================================================
+
+defaults:
+  # Applied to every tool unless overridden. Rate/concurrency always come from
+  # the single global governor derived from scope.yaml — never from the tool.
+  timeout_seconds: 900
+  rlimits: { cpu_seconds: 900, address_space_mb: 2048, open_files: 256, file_size_mb: 256, procs: 64 }
+  network: { follow_redirects: false, oob_callbacks: false, resolver: "kernel" }
+
+tools:
+
+  # ------------------------- PASSIVE (zero target contact) -------------------
+  subfinder:
+    classification: passive
+    phase: recon
+    target_params: [{ flag: "-d", kind: domain_list }]
+    forced_flags: ["-silent"]        # passive sources only; subfinder does not resolve/brute
+    forbidden_flags: ["-all"]        # `-all` enables slower/heavier sources — keep the default set
+    allowed_extra_flags: []
+    non_destructive: ["OSINT sources only (incl. CT logs)", "no resolution of target infra"]
+
+  amass:
+    classification: passive
+    phase: recon
+    target_params: [{ flag: "-d", kind: domain_list }]
+    forced_flags: ["-passive"]
+    forbidden_flags: ["-active", "-brute", "-ip"]
+    allowed_extra_flags: []
+    non_destructive: ["passive enumeration only"]
+
+  gau:
+    classification: passive
+    phase: recon
+    target_params: [{ position: stdin, kind: domain_list }]
+    forced_flags: ["--subs=false"]
+    forbidden_flags: []
+    allowed_extra_flags: []
+    non_destructive: ["reads public archives (wayback/commoncrawl); no target contact"]
+
+  # ------------------------------ ACTIVE -------------------------------------
+  httpx:
+    classification: active          # there is NO passive httpx — it contacts the target
+    phase: enumeration
+    target_params: [{ flag: "-l", kind: url_list }]
+    # httpx does NOT follow redirects by default; the guard is NOT enabling them + the forbid.
+    forced_flags: ["-timeout", "10"]
+    forbidden_flags: ["-follow-redirects", "-fr", "-follow-host-redirects", "-fhr"]
+    allowed_extra_flags: ["-status-code", "-title", "-tech-detect", "-web-server"]
+    non_destructive: ["GET/HEAD probing only", "redirects off; a Location host is re-gated as a new action"]
+
+  naabu:
+    classification: active
+    phase: enumeration
+    target_params: [{ flag: "-host", kind: host_or_cidr_list }]
+    # Connect scan (not SYN). VERIFY the value token for your naabu version (connect vs "c");
+    # the argv builder + closed allowlist mean the LLM cannot request SYN regardless.
+    forced_flags: ["-scan-type", "connect"]
+    forbidden_flags: ["-p-", "-s", "-rate"]     # no full-range, no SYN scan, no rate override
+    allowed_extra_flags: ["-top-ports"]
+    non_destructive: ["connect scan", "bounded port set", "rate from global governor"]
+
+  katana:
+    classification: active
+    phase: enumeration
+    target_params: [{ flag: "-list", kind: url_list }]
+    # katana FOLLOWS redirects and can crawl off-host by default. Cap depth and restrict the
+    # crawl to in-scope fields; the real backstop for off-scope hosts is the egress ACL + the
+    # gate re-checking every newly discovered host. Verify the exact scope/redirect flags for
+    # your katana version (e.g. -crawl-scope / -field-scope / -display-out-scope).
+    forced_flags: ["-depth", "3", "-field-scope", "rdn"]
+    forbidden_flags: ["-display-out-scope", "-do"]    # never crawl or emit out-of-scope hosts
+    allowed_extra_flags: ["-js-crawl"]
+    non_destructive: ["depth-capped crawl", "off-scope hosts blocked by egress ACL + re-gating"]
+
+  nuclei:
+    classification: active
+    phase: discovery
+    target_params: [{ flag: "-l", kind: url_list }]
+    forced_flags:
+      - "-exclude-tags"
+      - "dos,intrusive,fuzzing,brute-force,rce,sqli"
+      - "-no-interactsh"            # OOB callbacks OFF
+      - "-dast=false"
+      - "-disable-update-check"
+    forbidden_flags:
+      ["-include-tags", "-itags", "-fuzz", "-dast", "-payload", "-code", "-headless", "-interactsh-url"]
+    # LLM-supplied -tags are intersected with this allowlist AFTER exclusions apply. This POSITIVE
+    # allowlist is the real ceiling: exclude-tags alone does not guarantee all RCE/SQLi templates
+    # are suppressed (many are tagged by CVE/product, not "rce"/"sqli").
+    allowed_extra_flags: ["-tags", "-severity"]
+    tag_allowlist: ["cve", "misconfiguration", "exposure", "tech"]
+    non_destructive: ["template set bounded by tag_allowlist", "no DoS/intrusive/fuzz/OOB", "read-only checks"]
+
+  ffuf:
+    classification: active
+    phase: discovery
+    target_params:
+      - { flag: "-u", kind: url_list }
+      - { flag: "-w", kind: wordlist_ref }     # reference to a vetted wordlist, not an arbitrary path
+    forced_flags: ["-recursion=false", "-timeout", "10"]
+    forbidden_flags: ["-recursion", "-recursion-depth", "-rate", "-t", "-p"]  # never override the global governor
+    allowed_extra_flags: ["-mc", "-fc", "-ac"]
+    non_destructive: ["no recursion", "capped wordlist", "rate/threads from global governor only"]
+
+# =============================================================================
+# NOTES
+# =============================================================================
+# - nuclei / naabu / ffuf may ONLY be spawned through their one canonical safe
+#   profile above; no component may invoke them directly.
+# - Any tool that cannot be pinned to the kernel resolver is refused for ACTIVE
+#   use (passive-with-egress-ACL only).
+# - Adding a tool here is a safety change: get it reviewed. Default-deny wins.

@@ -5,6 +5,8 @@ sandbox/
 
 # Real scope config — only the example template is tracked
 config/scope.yaml
+# Real auth credentials — only the example template is tracked
+config/auth.yaml
 
 # Environment / secrets
 .env
@@ -23,6 +25,7 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 
 # OS / editor cruft
 .DS_Store

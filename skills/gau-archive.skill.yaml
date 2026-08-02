@@ -1,0 +1,36 @@
+name: gau-archive
+description: Pull historical URLs/endpoints for in-scope domains from public web archives.
+phase: recon
+classification: passive          # matches tools.yaml: gau = passive (archives, not the target)
+wraps_tool: gau
+owner_agent: recon
+
+inputs:
+  reads: "assets WHERE kind IN (domain,subdomain) AND scope_status=in_scope"
+  target_kind: [domain, subdomain]
+  params:
+    providers: [wayback, commoncrawl]   # archive sources only
+    max_time_seconds: 300
+
+outputs:
+  writes: "assets(kind=url|endpoint, status=new, source=gau-archive, scope_status=<computed>, resolve_state=pending)"
+  # URLs are candidates for later ACTIVE probing — this skill never fetches them.
+
+authorization:
+  requires_authorized: false        # reads third-party archives; no target contact
+  requires_active_approval: false
+  requires_passive_baseline: false
+
+scope_check:
+  - Every input domain/subdomain must be in_scope and not out_of_scope; else DENY_HALT.
+  - Only public archives are queried; the target host is never contacted.
+  - Every returned URL's host is re-scoped on write; out-of-scope URLs are stored, not actioned.
+
+non_destructive_guarantees:
+  - Reads wayback/commoncrawl only; `--subs=false`; no live probing modes.
+  - Produces candidate URLs; contacting them is a separate ACTIVE, approval-gated skill.
+
+tests:
+  - mock gau stdout -> asserts assets(kind=url, source=gau-archive) with per-URL scope_status.
+  - a returned URL whose host is out_of_scope -> stored with scope_status=out_of_scope, not queued.
+  - asserts no live-probe flags in argv.

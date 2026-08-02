@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bbagent"
+version = "0.1.0"
+description = "A safe control-plane for authorized bug-bounty / pentest automation."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2",
+    "pyyaml",
+    "tldextract",
+    "idna",
+    "typer",
+    "rich",
+    "beautifulsoup4",
+    "dnspython",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic"]
+dev = ["pytest", "hypothesis"]
+
+[project.scripts]
+bbagent = "bbagent.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

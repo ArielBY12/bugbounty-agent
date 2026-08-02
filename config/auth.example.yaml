@@ -1,0 +1,14 @@
+# =============================================================================
+# AUTHENTICATED-SCANNING CREDENTIALS  (template — copy to config/auth.yaml, git-ignored)
+# =============================================================================
+# Optional. If present, these headers are attached to active probes so you can test
+# logged-in surface. SAFETY (enforced in code):
+#   * credentials are attached ONLY to in-scope hosts that passed the scope-gate on
+#     their resolved+pinned IPs — never to an out-of-scope or unverified host;
+#   * the built-in probe does not follow redirects, so a cookie cannot leak onward;
+#   * credential VALUES are never written to the audit log or findings store (names only).
+# Use a low-privilege test account. Never commit config/auth.yaml.
+# =============================================================================
+headers:
+  Cookie: "session=REPLACE_ME"
+  # Authorization: "Bearer REPLACE_ME"

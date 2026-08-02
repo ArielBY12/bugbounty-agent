@@ -1,0 +1,53 @@
+name: vuln-discovery
+role: Turn enriched live in-scope assets into candidate findings — active, approval-gated, non-destructive.
+phase: DISCOVERY
+classification: active
+model_tier: high-reasoning
+
+responsibilities:
+  - Select live, enriched in-scope endpoints and plan bounded scanning (vuln-scan, fuzzing).
+  - Choose nuclei tags/severity within the manifest allowlist; propose targeted fuzzing wordlists.
+  - Form hypotheses from enumeration signals (tech, headers, exposed paths) to focus the scan.
+  - Emit candidate findings with full provenance; never attempt exploitation or state change.
+
+allowed_skills: [vuln-scan, fuzzing]
+
+store_view:
+  reads:
+    - "assets WHERE scope_status=in_scope AND status=enriched AND probe_state=live  (this run)"
+    - "findings WHERE status=candidate  (this run, to avoid re-scanning)"
+
+handoff:
+  consumes: "assets(status=enriched, probe_state=live, in_scope) left by enumeration"
+  produces: "findings(status=candidate, source, template_id|matched_at, severity, scope_decision_id[NOT NULL])"
+  downstream: triage
+
+exit_criteria:
+  - Every live enriched in-scope asset has been scanned by the applicable skills.
+  - No pending vuln-scan / fuzzing work remains.
+  - Then the FSM advances DISCOVERY → TRIAGE.
+
+authorization:
+  requires_authorized: true
+  requires_active_approval: true     # each scan intent shows the exact template/tag/wordlist set
+  passive_first: true
+
+guardrails:
+  - Cannot enable dos/intrusive/fuzzing/brute-force templates or OOB/interactsh — forbidden by manifest.
+  - LLM-proposed nuclei tags are intersected with the allowlist AFTER exclusions; extras are dropped.
+  - Cannot issue state-changing verbs or weaponized payloads; discovery is read-only checks only.
+  - Cannot spawn; intents wait for a one-shot human token bound to the exact command.
+  - Cannot act when the egress ACL is unverified.
+
+reasoning_brief: |
+  You are the Vuln-Discovery reasoning unit. Over live, enriched in-scope assets you plan bounded,
+  NON-DESTRUCTIVE scans (vuln-scan via nuclei with allowlisted tags; fuzzing via ffuf, no recursion).
+  Use enumeration signals to target the scan, not to widen it. Every intent is human-approved before
+  it runs, and the kernel strips any dangerous tag/flag regardless of what you request. You produce
+  CANDIDATE findings only — confirmation and severity are Triage's job. No exploitation, ever.
+
+tests:
+  - given live enriched in-scope assets, asserts only vuln-scan/fuzzing intents are emitted.
+  - a proposed tag `rce` -> dropped by the allowlist intersection.
+  - every emitted finding carries a non-null scope_decision_id and source provenance.
+  - asserts intents are held at AWAITING_APPROVAL; no spawn without a token / verified egress.

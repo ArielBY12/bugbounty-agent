@@ -1,0 +1,39 @@
+name: port-enum
+description: Connect-scan a bounded top-ports set on in-scope hosts to enumerate services.
+phase: enumeration
+classification: active           # matches tools.yaml: naabu = active
+wraps_tool: naabu
+owner_agent: enumeration
+
+inputs:
+  reads: "assets WHERE kind IN (host,ip) AND scope_status=in_scope AND resolve_state=resolved"
+  target_kind: [host, ip]
+  params:
+    top_ports: 100                 # bounded; full-range is forbidden
+    timeout_seconds: 10
+
+outputs:
+  writes: "assets(kind=port|service, status=enriched, fields: port,protocol,service)"
+
+authorization:
+  requires_authorized: true
+  requires_active_approval: true
+  requires_passive_baseline: true
+
+scope_check:
+  - Every host/IP re-validated — out_of_scope wins; unverified ⇒ DENY_HALT.
+  - Resolved IP must be public and (boundary mode) inside in_scope.ip_ranges; private/internal
+    /metadata IPs hard-denied.
+  - Kernel pins the resolved IP; connect target cannot differ from the validated one.
+  - Egress ACL verified active before spawn.
+
+non_destructive_guarantees:
+  - Connect scan only (no SYN); `-p-` full-range and `-s` SYN forbidden by the tool manifest.
+  - Bounded port set; rate from the single global governor.
+  - No service interaction beyond TCP connect (no banner exploitation).
+
+tests:
+  - mock naabu output -> asserts port/service rows.
+  - out_of_scope host, or resolved private IP -> DENY_HALT.
+  - asserts connect scan-type in argv and `-p-`/`-s` absent.
+  - asserts spawn refused without approval token / egress ACL.

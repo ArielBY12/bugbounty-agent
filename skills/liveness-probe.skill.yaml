@@ -1,0 +1,40 @@
+name: liveness-probe
+description: Probe which in-scope hosts/URLs are live and capture status, title, and tech.
+phase: enumeration
+classification: active           # matches tools.yaml: httpx = active (there is no passive httpx)
+wraps_tool: httpx
+owner_agent: enumeration
+
+inputs:
+  reads: "assets WHERE kind IN (subdomain,host,url,endpoint) AND scope_status=in_scope AND resolve_state=resolved"
+  target_kind: [url, host, subdomain, endpoint]
+  params:
+    methods: [GET, HEAD]           # read-only only
+    timeout_seconds: 10
+
+outputs:
+  writes: "assets(kind=service|url|endpoint, status=enriched, probe_state=live|dead, fields: status_code,title,tech,web_server)"
+
+authorization:
+  requires_authorized: true         # contacts target infrastructure
+  requires_active_approval: true    # one-shot, non-broadening token bound to exact argv
+  requires_passive_baseline: true   # host must have a prior passive observation
+
+scope_check:
+  - Every target atom re-validated — out_of_scope wins; unverified ⇒ DENY_HALT.
+  - Resolved IP must be public and (ip_ranges_mode=boundary) inside in_scope.ip_ranges;
+    private/internal/metadata IPs are hard-denied even here.
+  - Kernel resolves once and pins the IP; DNS re-resolution/rebinding at connect time ⇒ deny.
+  - Redirects are NOT followed; any Location host is re-submitted to the gate as a new action.
+  - Egress ACL must be verified active before spawn.
+
+non_destructive_guarantees:
+  - GET/HEAD only; no request bodies, no state-changing verbs.
+  - Redirect-follow flags forbidden by the tool manifest.
+  - Rate and concurrency come from the single global governor (scope.yaml rate_limits).
+
+tests:
+  - mock httpx jsonl -> asserts enriched service rows.
+  - out_of_scope target, or in-scope name resolving to 169.254.169.254 / RFC1918 -> DENY_HALT.
+  - asserts spawn is refused without a valid approval token or with egress ACL down.
+  - asserts redirect-follow flags absent in argv.

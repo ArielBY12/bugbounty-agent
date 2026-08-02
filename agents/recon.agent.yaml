@@ -1,0 +1,55 @@
+name: recon
+role: Discover in-scope assets from passive OSINT only — zero packets to the target.
+phase: RECON
+classification: passive
+model_tier: standard
+
+responsibilities:
+  - Turn the in-scope seed domains from scope.yaml into a broad asset inventory.
+  - Plan passive skill intents (subdomain-enum, amass-passive, gau-archive) and correlate outputs.
+  - Deduplicate discovered names/URLs and let the kernel re-scope every discovery on write.
+  - Decide when passive discovery has plateaued (input to the FSM's exit check).
+
+allowed_skills: [subdomain-enum, amass-passive, gau-archive]
+
+store_view:
+  reads:
+    - "scope snapshot (in_scope domains/subdomains) — read-only"
+    - "assets WHERE source IN (subfinder,amass,gau-archive)  (this run)"
+
+handoff:
+  consumes: "in-scope seed domains from scope.yaml"
+  produces: "assets(kind=subdomain|url|endpoint, status=new, scope_status=in_scope, resolve_state=pending)"
+  downstream: enumeration
+
+exit_criteria:
+  - Every in-scope seed has been run through each allowed passive skill at least once.
+  - Two consecutive passive passes yield no new in_scope assets, or a max pass cap (N) is reached
+    (guarantees termination even if a flapping OSINT source never gives two identical passes).
+  - Then the FSM advances RECON → ENUMERATION.
+
+authorization:
+  requires_authorized: false        # passive OSINT — no target contact
+  requires_active_approval: false
+  passive_first: n/a                 # recon IS the passive baseline others depend on
+
+guardrails:
+  - Cannot spawn, open sockets, or write the store directly.
+  - Cannot emit an intent for any skill outside allowed_skills.
+  - Cannot contact target infrastructure; any active intent here is rejected by the kernel.
+  - Cannot assert scope — the kernel re-derives scope_status on every write.
+  - Out-of-scope discoveries are stored for provenance but never queued as targets.
+
+reasoning_brief: |
+  You are the Recon reasoning unit. Your job is breadth of discovery via passive sources ONLY.
+  From the in-scope seeds, plan subdomain-enum / amass-passive / gau-archive intents, then read
+  the resulting assets and decide whether another pass is worthwhile. You never touch the target;
+  you only query third-party OSINT through skills the kernel runs for you. You do not judge scope
+  or authorization — you propose, the kernel disposes. Stop proposing when new in-scope assets
+  stop appearing; the FSM decides when to advance.
+
+tests:
+  - given in-scope seeds, asserts only passive skill intents are emitted.
+  - an intent for an active skill (e.g. liveness-probe) -> rejected (not in allowed_skills).
+  - asserts the agent issues no subprocess/network/store-write call itself.
+  - a de-scoped seed mid-run -> its subdomains are no longer proposed as targets.

@@ -1,0 +1,39 @@
+name: fuzzing
+description: Content-discovery fuzzing of in-scope base URLs with a capped wordlist, no recursion.
+phase: discovery
+classification: active           # matches tools.yaml: ffuf = active
+wraps_tool: ffuf
+owner_agent: vuln-discovery
+
+inputs:
+  reads: "assets WHERE kind=url AND scope_status=in_scope AND probe_state=live"
+  target_kind: [url]
+  params:
+    wordlist_ref: common-web        # reference to a vetted wordlist, not an arbitrary path
+    match_codes: [200, 204, 301, 302, 401, 403]
+    timeout_seconds: 10
+
+outputs:
+  writes: "assets(kind=endpoint, status=new, source=fuzzing) ; findings(status=candidate, source=ffuf, matched_at, scope_decision_id[NOT NULL]) for notable hits (e.g. 401/403 auth-required, 200 on a sensitive path)"
+
+authorization:
+  requires_authorized: true
+  requires_active_approval: true    # approval shows the exact base URL(s) + wordlist + rate
+  requires_passive_baseline: true
+
+scope_check:
+  - Every base URL re-validated — out_of_scope wins; unverified ⇒ DENY_HALT.
+  - Wordlist is a vetted reference; an agent-supplied `-w` PATH is refused (list is data, not a path).
+  - Resolved IP pinned; private/internal/metadata IPs hard-denied; egress ACL verified.
+
+non_destructive_guarantees:
+  - No recursion (`-recursion=false`; `-recursion*` forbidden).
+  - GET-based content discovery; no destructive payloads or state-changing verbs.
+  - Rate and threads come ONLY from the global governor (`-rate`/`-t`/`-p` forbidden).
+  - Capped wordlist size; bounded runtime.
+
+tests:
+  - mock ffuf output -> asserts endpoint/candidate rows.
+  - out_of_scope base URL -> DENY_HALT; agent-supplied wordlist path -> refused.
+  - asserts `-recursion=false` present and `-rate`/`-t` absent in argv.
+  - asserts spawn refused without approval token / egress ACL.

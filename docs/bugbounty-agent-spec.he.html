@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<title>bugbounty-agent — מסמך אפיון</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  html { direction: rtl; }
+  body {
+    font-family: 'Arial Hebrew','SF Hebrew','Helvetica Neue',Arial,sans-serif;
+    font-size: 11.5pt; line-height: 1.7; color: #1a1a1a; direction: rtl; text-align: right; margin: 0;
+  }
+  h1,h2,h3,h4 { color: #0b3d5c; line-height: 1.3; }
+  h1 { font-size: 22pt; }
+  h2 { font-size: 16pt; border-bottom: 2px solid #0b3d5c; padding-bottom: 4px; margin-top: 30px; page-break-after: avoid; }
+  h3 { font-size: 13pt; color: #145a7a; margin-top: 18px; page-break-after: avoid; }
+  p { margin: 8px 0; }
+  code, kbd, .ltr { direction: ltr; unicode-bidi: isolate; font-family: 'SF Mono','Menlo','Consolas',monospace; }
+  code { background: #f2f4f7; padding: 1px 4px; border-radius: 3px; font-size: 0.88em; color: #0a3a52; }
+  pre { direction: ltr; unicode-bidi: isolate; text-align: left; background: #0f1720; color: #e6edf3;
+        padding: 14px; border-radius: 6px; overflow-x: auto; font-size: 8.4pt; line-height: 1.4; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 9.6pt; direction: rtl; page-break-inside: auto; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  th, td { border: 1px solid #cdd5df; padding: 6px 9px; text-align: right; vertical-align: top; }
+  th { background: #0b3d5c; color: #fff; }
+  tr:nth-child(even) td { background: #f7f9fb; }
+  blockquote { border-right: 4px solid #0b3d5c; background: #eef4f8; margin: 12px 0; padding: 8px 14px; }
+  ul, ol { padding-right: 22px; padding-left: 0; margin: 8px 0; }
+  li { margin: 4px 0; }
+  strong { color: #0b3d5c; }
+  .cover { text-align: center; padding-top: 150px; page-break-after: always; }
+  .cover h1 { font-size: 32pt; border: none; margin-bottom: 6px; }
+  .cover .sub { font-size: 15pt; color: #145a7a; margin-top: 8px; }
+  .cover .meta { margin-top: 55px; font-size: 11pt; color: #444; line-height: 2; }
+  .cover .tag { display:inline-block; margin-top: 26px; padding: 5px 16px; background:#0b3d5c; color:#fff; border-radius: 20px; font-size: 10pt; }
+  .toc { page-break-after: always; }
+  .toc h2 { border-bottom: none; }
+  .toc ol { line-height: 2.1; font-size: 11.5pt; }
+  .note { background:#fff8e1; border-right:4px solid #f5a623; padding:8px 14px; margin:12px 0; }
+  .en { direction: ltr; unicode-bidi: isolate; }
+  caption, .cap { font-size: 9.5pt; color: #555; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- ===================== COVER ===================== -->
+<div class="cover">
+  <h1>bugbounty-agent</h1>
+  <div class="sub">מסמך אפיון פרויקט מקיף</div>
+  <div class="sub">מישור בקרה בטוח לאוטומציה של Bug-Bounty / Pentest מורשה</div>
+  <div class="tag">תורגם מהמקור באנגלית</div>
+  <div class="meta">
+    סטטוס: אפיון והיערכות הושלמו · המימוש טרם החל<br>
+    היקף: כל ההחלטות שהתקבלו בסשן התכנון<br>
+    קהל יעד: הארכיטקט הסוקר וכל מהנדס/סוכן שיממש את המערכת
+  </div>
+</div>
+
+<!-- ===================== TOC ===================== -->
+<div class="toc">
+  <h2>תוכן העניינים</h2>
+  <ol>
+    <li>תקציר מנהלים</li>
+    <li>מטרות ולא-מטרות (Goals &amp; Non-goals)</li>
+    <li>עקרונות בטיחות בלתי-ניתנים למשא-ומתן (Safety Invariants)</li>
+    <li>ארכיטקטורה וגבולות אמון (Trust Boundaries)</li>
+    <li>מודל האיום — מה שינה מעבר ה-Red-team</li>
+    <li>לולאת הבקרה האגֶנטית (Control Loop)</li>
+    <li>שער ההיקף (Scope-gate) — כיצד עוטפים כל קריאה לכלי</li>
+    <li>אישור אנושי בלולאה (Human-in-the-loop)</li>
+    <li>מאגר הממצאים ויומן הביקורת (Findings Store &amp; Audit Log)</li>
+    <li>מצאי הכלים והערבויות הלא-הרסניות</li>
+    <li>קטלוג ה-Skills</li>
+    <li>תת-הסוכנים וחוזה ההעברה (Hand-off Contract)</li>
+    <li>מחסנית טכנולוגית (Tech Stack)</li>
+    <li>סכימת התצורה (Configuration Schema)</li>
+    <li>החלטות שננעלו ופסיקות</li>
+    <li>שאלות פתוחות וסיכונים שיוריים</li>
+    <li>מפת דרכים למימוש (Roadmap)</li>
+    <li>נספח: מילון מונחים (Glossary)</li>
+  </ol>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2>1. תקציר מנהלים</h2>
+<p><code>bugbounty-agent</code> הוא מתזמר אגֶנטי (agentic orchestrator) לעבודת Bug-Bounty ובדיקות
+חדירה מורשות. הוא מניע <strong>מכונת-מצבים דטרמיניסטית בת חמישה שלבים</strong> —
+<span class="en">Recon → Enumeration → Vulnerability discovery → Validation/triage → Reporting</span>
+— שבה <strong>ה-LLM מסיק אך לעולם אינו פועל</strong>.</p>
+<p>הפלט היחיד של ה-LLM הוא <code>ActionProposal</code> מאומת-סכימה (איזה כלי, אילו יעדים, ומדוע).
+ההצעה חוצה גבול-אמון יחיד אל <strong>ליבה מהימנה (trusted kernel)</strong> אשר מאמתת מחדש, באופן
+עצמאי, כל דבר מול <code>config/scope.yaml</code>. מאחר שההצעה אינה נושאת שום סמכות, מודל שעבר
+Prompt-injection או שהוזה יכול, במקרה הגרוע, רק לפלוט הצעה נוספת שהליבה תסרב לה.</p>
+<p>ערך המערכת הוא <strong>מישור הבקרה הבטוח</strong> וההסקה שבין הרצות הכלים — לא הסריקה עצמה. היא
+מתזמרת כלים בשלים ומוכחים (subfinder, amass, httpx, katana, gau, naabu, nuclei, ffuf) במקום לממש
+מחדש סורקים.</p>
+
+<!-- ===================== 2 ===================== -->
+<h2>2. מטרות ולא-מטרות</h2>
+<h3>מטרות</h3>
+<ul>
+  <li>אוטומציה של מחזור החיים מ-Recon ועד דיווח, עבור תוכנית <em>אחת, מורשית במפורש</em>.</li>
+  <li>להבטיח שכל פעולה הנוגעת ביעד היא, באופן מוכח, בהיקף, מוגבלת-קצב, מתועדת, ולפעולות אקטיביות —
+      מאושרת אנושית. הכל נאכף בקוד, לא בהנחיות (prompts).</li>
+  <li>לשרשר תוצאות בין השלבים דרך מאגר ממצאים מתמיד ובר-ביקורת.</li>
+  <li>לשמור על נתיב הבטיחות הקריטי חופשי מכל קריאת LLM, כך שיהיה בר-בדיקה יחידתית ללא מודל.</li>
+</ul>
+<h3>לא-מטרות</h3>
+<ul>
+  <li>לא פלטפורמת סריקה המונית; מעורבות (engagement) אחת / תוכנית אחת לכל מאגר.</li>
+  <li>לא מסגרת ניצול (exploitation) או חִימוש; הוכחת-היתכנות (PoC) היא מינימלית ולא-מחומשת.</li>
+  <li>לא מימוש-מחדש של סורקים; אנו עוטפים כלים קיימים.</li>
+  <li>לא מערכת אוטונומית של "שגר-ושכח"; אדם מאשר כל צעד אקטיבי.</li>
+</ul>
+
+<!-- ===================== 3 ===================== -->
+<h2>3. עקרונות בטיחות בלתי-ניתנים למשא-ומתן (SAF)</h2>
+<p>ארבעת העקרונות נאכפים ב<strong>קוד</strong>, הם הדבר הראשון שכל סוכן קורא (<code>CLAUDE.md</code>
+§0), ואינם מתירים חריגים.</p>
+<ul>
+  <li><strong>SAF-1 — שער היקף/הרשאה קשיח.</strong> כל פעולה שעלולה לגעת ביעד מאומתת מול
+      <code>scope.yaml</code> לפני שהיא רצה. השער הוא <strong>כשל-סגור (fail-closed)</strong>:
+      out-of-scope תמיד גובר על in-scope (אפילו על התאמת תו-כללי); כל דבר לא-מאומת, דו-משמעי או
+      בלתי-ניתן-לפירוק מסורב והריצה נעצרת (<code>DENY_HALT</code>). כל פעולה הנוגעת בתשתית היעד
+      דורשת בנוסף <code>authorized == true</code>.</li>
+  <li><strong>SAF-2 — אדם בלולאה לפני כל צעד אקטיבי.</strong> OSINT פסיבי (אפס מנות ליעד) רשאי לרוץ
+      תחילה. כל פעולה השמה מנה על תשתית היעד היא <em>אקטיבית</em> ודורשת, בזמן הרצה:
+      <code>authorized == true</code> וגם <code>active_actions_allowed == true</code> וגם אסימון
+      אישור אנושי חד-פעמי, לא-מרחיב, הכבול לאותה פקודה בדיוק. אין-TTY / פקיעה / EOF בערוץ האישור ⇐
+      DENY.</li>
+  <li><strong>SAF-3 — לא-הרסני כברירת מחדל.</strong> אין DoS, אין brute-force, אין ניצול מחומש, אין
+      חילוץ נתוני-משתמש אמיתיים, אין קריאות out-of-band לצדדים שלישיים. בדיקות-אימות חוזרות הן
+      קריאה-בלבד (GET/HEAD) כברירת מחדל; כל פועל משנה-מצב דורש אישור נפרד בדרג גבוה יותר. הממצאים
+      מטופלים בגילוי אחראי (responsible disclosure) לבעל התוכנית.</li>
+  <li><strong>SAF-4 — תיעוד מלא + הגבלת קצב + מאגר ממצאים מתמיד.</strong> כל פעולה (מותרת או מסורבת)
+      נכתבת ליומן ביקורת מוסף-בלבד ומשורשר-hash <strong>לפני</strong> שהיא רצה. כל העבודה היוצאת
+      מקוצבת על-ידי מגביל-קצב <strong>גלובלי-יחיד לתהליך</strong> הנגזר מ-<code>scope.yaml</code>.
+      מאגר ממצאים בבעלות הליבה הוא מקור-האמת המשרשר תוצאות בין השלבים.</li>
+</ul>
+<blockquote>כלל המוצא האחרון: אם אינך יכול לספק את כל הארבעה עבור פעולה — הפעולה אינה קורית. כאשר
+ההיקף או הבטיחות אינם ודאיים — עצור ושאל את האדם.</blockquote>
+
+<!-- ===================== 4 ===================== -->
+<h2>4. ארכיטקטורה וגבולות אמון</h2>
+<p>שני אזורים המופרדים בגבול יחיד של העברת-הודעות.</p>
+<pre><code>┌─────────────────────── UNTRUSTED ZONE ───────────────────────┐
+│  LLM Reasoner (structured output only)                        │
+│  Sub-agents: recon · enumeration · vuln-discovery · triage ·  │
+│              reporting                                         │
+│  Orchestrator control-flow (holds NO exec power)              │
+│  Emits ONLY: ActionProposal / SkillIntent  (data)             │
+│  Holds NO: subprocess, socket, DB-write, fs-write             │
+│            outside sandbox/&lt;run&gt;/                              │
+└───────────────────────────────┬──────────────────────────────┘
+                 ActionProposal  │  (the ONLY message that crosses)
+                                 ▼
+╔══════════════════════════ TRUSTED KERNEL ════════════════════════╗
+║ Broker → Scope-Gate → Policy → Rate Governor → Approval → Executor║
+║ tool manifest · scope.yaml · authz/active gate · ONE global      ║
+║ token-bucket+semaphore · HITL prompt · egress-filtered sandbox   ║
+║ Findings Store (SQLite) · Audit Log (JSONL, hash-chained)        ║
+╚════════════════════════════════┬═════════════════════════════════╝
+                                 ▼
+    subfinder · amass · httpx · katana · gau · naabu · nuclei · ffuf
+          (spawned ONLY by the Executor, inside the egress sandbox)</code></pre>
+<div class="cap">איור 1 — אזור לא-מהימן, ליבה מהימנה, והכלים המורצים אך ורק בתוך ה-sandbox.</div>
+<h3>תכונות מפתח</h3>
+<ul>
+  <li>הגבול נחצה על-ידי סוג-הודעה יחיד בכל כיוון: <code>ActionProposal</code> פנימה,
+      <code>ActionResult</code> מחוטא החוצה. אין הפניות לאובייקטים, callables או file-handles
+      החוצים את הגבול.</li>
+  <li><strong>שני קירות עצמאיים מתצורה אחת:</strong> (1) בדיקות מדיניות על ה-argv/היעדים המורכבים,
+      ו-(2) רשימת בקרת יציאה רשתית (egress ACL) הנוצרת מאותו <code>scope.yaml</code>. קיר 2 תופס
+      את מה שבדיקת argv אינה יכולה — רקורסיה טבעית של כלים, הפניות (redirects), ו-CNAME/DNS
+      rebinding. <strong>כלים אקטיביים מסרבים לרוץ אלא אם מסנן היציאה אומת כפעיל באתחול.</strong></li>
+  <li>כל שורת ממצא ו-asset נושאת שרשרת-מקור (provenance):
+      <code>run_id → phase → agent → skill → tool_invocation → scope_decision → approval →
+      audit_hash → sandbox artifact</code>.</li>
+</ul>
+
+<!-- ===================== 5 ===================== -->
+<h2>5. מודל האיום — מה שינה מעבר ה-Red-team</h2>
+<p>העיצוב חוזק בשני סבבי סקירה יריבית (adversarial) שחיפשו עקיפות של שער-ההיקף ונתיבי פעולה
+אקטיבית לא-מאושרת. הממצאים שעיצבו את התכן הסופי:</p>
+<ul>
+  <li><strong>הרחבת יעדים טבעית של כלים</strong> (subfinder המזין תת-דומיינים שהתגלו, katana הזוחל
+      אל מחוץ להיקף, nuclei העוקב אחרי הפניות) עלולה להגיע למארחים שהשער מעולם לא אימת ⇐ מוקל
+      על-ידי ה-<strong>egress ACL</strong> כגיבוי האמיתי, re-gating של הפניות, ו-re-scoping לכל
+      תגלית בכתיבה.</li>
+  <li><strong>שם-מארח in-scope הנפתר ל-IP פרטי/פנימי/metadata</strong> (SSRF-אל-תשתית) ⇐ מוקל
+      על-ידי <strong>סירוב-קשיח מקודֶד ולא-ניתן-לתצורה</strong> של טווחים פרטיים/פנימיים/metadata
+      לכל פעולה, כולל פסיבית.</li>
+  <li><strong>DNS rebinding / TOCTOU</strong> בין בדיקת-השער לחיבור ⇐ מוקל על-ידי
+      <strong>resolve-once-and-pin</strong>; כלים שאי-אפשר להצמיד ל-resolver של הליבה מסורבים
+      לשימוש אקטיבי.</li>
+  <li><strong>httpx סווג בטעות כפסיבי</strong> ⇐ הוסר; <strong>httpx הוא אקטיבי</strong>. "פסיבי"
+      משמעו אפס מגע ביעד, והסיווג הוא תכונת manifest סטטית, לעולם לא נגזרת מפלט ה-LLM.</li>
+  <li><strong>מגביל-קצב פר-כלי</strong> שמאפשר ל-N כלים לצבור מעבר לתקרה ⇐ הוחלף במגביל
+      <strong>גלובלי-יחיד לתהליך</strong>; בדיקת CI מוודאת שהקצב המצרפי לעולם אינו חורג מהתקרות.</li>
+  <li><strong>Resume המשחזר פעולה מאושרת</strong> ללא אישור טרי ⇐ מוקל על-ידי re-gating ב-resume
+      ושריפת ה-nonce החד-פעמי לפני ה-spawn.</li>
+  <li><strong>תבניות nuclei מסוכנות / OOB</strong> ⇐ הדרות-תגים כפויות, <code>-no-interactsh</code>,
+      allowlist חיובי של תגים כתקרה האמיתית, ודגלי re-enable אסורים.</li>
+</ul>
+
+<!-- ===================== 6 ===================== -->
+<h2>6. לולאת הבקרה האגֶנטית</h2>
+<p><strong>מצבים:</strong> <code>INIT → RECON → ENUMERATION → DISCOVERY → TRIAGE → REPORTING →
+DONE</code>, בתוספת חוצי-מצבים <code>HALTED</code> (סירוב-קשיח של השער, דביק) ו-<code>AWAITING_APPROVAL</code>
+(השהיית HITL).</p>
+<p><strong>יחידת העבודה = פעולה אחת</strong> (לא שלב). כל פעולה היא פריט תור עמיד הנע דרך מצבים
+מתמידים: <code>PLANNED → SCOPE_CHECKED → (APPROVAL_PENDING → APPROVED) → RATE_WAIT → RUNNING →
+NORMALIZING → DONE</code>, עם מצבי-קצה <code>DENIED / FAILED→DEAD / SKIPPED</code>. מחזור פר-טיק:
+<code>PLAN (LLM) → PRE-GATE (code) → APPROVE (human, active only) → EXECUTE (kernel) → OBSERVE
+(parse→store) → RE-PLAN</code>, עם checkpoint לאחר כל מעבר, לצורך יכולת-שחזור מלאה.</p>
+<h3>חלוקת LLM / קוד (נושאת-משקל)</h3>
+<table>
+  <tr><th>ה-LLM מחליט (הסקה)</th><th>קוד דטרמיניסטי בבעלות (אפס LLM)</th></tr>
+  <tr>
+    <td>איזה כלי/יעד הבא; היפותזות; ניתוח פלט; קורלציה; הצעות dedup; נרטיב חומרה; פרוזת הדיווח</td>
+    <td>שיוך היקף; סיווג פסיבי/אקטיבי; אימות אסימון-אישור; הרכבת argv; אכיפת קצב; commit של מעבר-שלב;
+        כל עובדת-סמכות נגזרת מחדש מהתצורה</td>
+  </tr>
+</table>
+<ul>
+  <li>המסיק מציע; הליבה מכריעה. הטענות <code>is_active</code> והלא-הרסניות מה-LLM הן ייעוציות;
+      ה-manifest והשער מכריעים.</li>
+  <li><strong>קידום השלב הוא דטרמיניסטי</strong> — מונע על-ידי קריטריוני-היציאה של כל שלב, לעולם לא
+      על-ידי ה-LLM המצהיר "סיימתי". בקשה אקטיבית המגיעה לפני אבן-הדרך של recon פסיבי — מסורבת.</li>
+</ul>
+
+<!-- ===================== 7 ===================== -->
+<h2>7. שער ההיקף (כיצד עוטפים כל קריאה לכלי)</h2>
+<p><strong>7.1 יירוט.</strong> לכל כלי יש manifest בבעלות הליבה המצהיר היכן שוכנים היעדים שלו
+(<code>target_params</code> עם <code>kind</code> סמנטי), סיווג, <code>forced_flags</code>,
+<code>forbidden_flags</code>, allowlist סגור <code>allowed_extra_flags</code> (ברירת מחדל ריק),
+והמפענח שלו. הסוכן מגיש שדות מובְנים; הליבה מרכיבה את ה-argv כרשימת Python עבור <code>subprocess</code>
+עם <code>shell=False</code>. אין shell, לעולם.</p>
+<p><strong>7.2 חילוץ יעדים (כוללני-יתר, כשל-סגור).</strong></p>
+<ul>
+  <li>קובצי רשימת-יעדים ו-stdin הם <strong>נתונים</strong>, לעולם לא נתיבים שהסוכן מספק — הליבה
+      מאמתת כל שורה וכותבת בעצמה את קובץ ה-temp המאומת. כל נתיב <code>-l/-iL/-w</code> שהסוכן מספק
+      ⇐ מסורב.</li>
+  <li>ה-manifests חייבים להצהיר במלואם על כל מקור-יעד. מקור לא-מוצהר ⇐ סירוב. כלי לא-מוכר ⇐ מסווג
+      אקטיבי (כשל-סגור). token בלתי-ניתן-לפירוק במיקום-יעד ⇐ <code>DENY_HALT</code>.</li>
+</ul>
+<p><strong>7.3 נרמול והתאמה (out-of-scope גובר).</strong> כל atom עובר lowercase, הסרת נקודה סופית,
+IDNA/UTS-46 ← punycode, נרמול NFC, ודחיית תוויות מעורבות-סקריפט/מבלבלות. כתובות URL נפרסות בקפדנות
+כאשר המארח נלקח מרכיב ה-authority <strong>לאחר השלכת ה-userinfo</strong> (<code>http://in-scope@evil.com/</code>
+← <code>evil.com</code>). סדר ההכרעה פר-atom:</p>
+<ol>
+  <li><strong>out_of_scope תחילה</strong> ← סירוב הבקשה כולה (גובר אפילו על תו-כללי in-scope).</li>
+  <li><strong>in_scope</strong> — דומיין מדויק, תו-כללי בתווית-שמאלית על <strong>גבולות דומיין
+      בר-רישום (PSL)</strong> (<code>*.example.com</code> מתאים ל-<code>a.example.com</code>,
+      <code>a.b.example.com</code>; לא ל-apex החשוף; לא ל-<code>example.com.evil.com</code>), או בתוך
+      טווח CIDR של <code>ip_ranges</code>.</li>
+  <li>אף אחד מהם ⇐ <strong>UNVERIFIED ⇐ DENY_HALT.</strong></li>
+</ol>
+<p><strong>7.4 מדיניות DNS / IP.</strong> טווחים פרטיים/פנימיים/metadata (RFC1918, loopback,
+link-local, <code>169.254.169.254</code>, CGNAT) <strong>מסורבים-קשיח לכל פעולה כולל פסיבית</strong>.
+פותרים פעם אחת בליבה; מקפיאים את קבוצת ה-IP לתוך טביעת-האצבע של הפעולה; מצמידים את החיבור. שרשראות
+CNAME נעקבות בזמן-השער (כל קפיצה out-of-scope ⇐ <code>DENY_HALT</code>). הפניות מושבתות כברירת מחדל;
+מארח <code>Location</code> מוגש-מחדש לשער כפעולה חדשה.</p>
+<p><strong>7.5 שער דו-דרגתי.</strong></p>
+<ul>
+  <li>דרגה 1 (כל הפעולות): פסק-היקף מצרפי; כל atom out-of-scope/לא-מאומת ⇐ <code>DENY_HALT</code>.</li>
+  <li>דרגה 2 (אקטיבי): בנוסף דורש <code>authorized == true</code> וגם <code>active_actions_allowed
+      == true</code> וגם אסימון-אישור אנושי חד-פעמי תקף.</li>
+</ul>
+<p>ה-matcher מגיע עם <strong>בדיקות-תכונה של Hypothesis + קורפוס יריבי של ~50 מקרי "חובה-לסרב"</strong>
+הרצים ב-CI כשער-מיזוג (merge gate).</p>
+
+<!-- ===================== 8 ===================== -->
+<h2>8. אישור אנושי בלולאה</h2>
+<p><strong>Passive-first נאכף מבנית</strong> על-ידי שלושה מנעולים עצמאיים: סיווג ה-manifest, שער
+<code>PassiveFirstGate</code> (מארח זקוק ל-≥1 תצפית פסיבית מוצלחת לפני כל פעולה אקטיבית), ושִעֲרוּר-שלב
+(RECON מתיר רק כלים פסיביים).</p>
+<p><strong>ApprovalRequest</strong> (מה שהאדם רואה): הקשר התוכנית (<code>name/platform/policy_url</code>),
+הכלי, ה-<strong>argv המלא והפתור בית-אחר-בית</strong> (כולל דגלי-קצב מוזרקים, תוכן קובץ-רשימה מורחב,
+IP-ים פתורים ומוצמדים), <code>ScopeDecision</code> פר-יעד, הסיווג, רדיוס-הנזק (מספר בקשות צפוי, rps,
+concurrency), הרציונל של ה-LLM + מזהי-ממצא מקוריים, <code>out_of_scope.notes</code> מוצג מילה-במילה,
+ו-<code>proposal_fingerprint</code> + <code>expires_at</code> קצר.</p>
+<p><strong>ApprovalGrant / אסימון — חד-פעמי ולא-מרחיב:</strong></p>
+<ul>
+  <li>כבול ל-<code>sha256(canonical(tool, sorted argv, sorted targets, is_active, phase, run_id))</code>,
+      המחושב על-ידי פונקציית-נרמול יחידה המשמשת בבניית-הבקשה ובאימות-ההרצה כאחד.</li>
+  <li>שימוש-יחיד: ה-nonce נשרף במאגר לפני ה-spawn (קריסה אינה יכולה להריצו מחדש).</li>
+  <li>לא-מרחיב: אדם רשאי רק <em>לצמצם</em> (למחוק יעדים, להנמיך קצב); הפעולה המצומצמת עוברת re-gating.
+      לעולם לא להוסיף יעד, להעלות קצב, או להחליף כלי.</li>
+  <li>מאומת-מחדש ב-resume מול ה-<code>scope.yaml</code> הנוכחי, עם בדיקה חוזרת של
+      <code>authorized == true</code>.</li>
+  <li>כשל-סגור: אין-TTY / פקיעה / EOF ⇐ DENY. ריצות ללא-השגחה מסרבות לכל פעולה אקטיבית.</li>
+</ul>
+
+<!-- ===================== 9 ===================== -->
+<h2>9. מאגר הממצאים ויומן הביקורת</h2>
+<ul>
+  <li><strong>SQLite</strong> (<code>findings/&lt;program-handle&gt;/store.db</code>, WAL) = מקור-אמת
+      בר-שאילתה.</li>
+  <li><strong>JSONL מוסף-בלבד, משורשר-hash ב-SHA-256</strong> (<code>events.jsonl</code>) = מקור-אמת
+      עמיד-לזיוף. ה-JSONL מוסף לפני שה-DB משתנה; ה-DB הוא מטמון הניתן לשחזור מהיומן.</li>
+  <li><strong>הרשאת כתיבה היא של הליבה בלבד</strong> — קוד לא-מהימן לעולם אינו כותב שורות, כך שמודל
+      עוין אינו יכול להזריק הצהרת "in-scope" מזויפת.</li>
+  <li>כל שורת <code>tool_invocation</code>, <code>finding</code> ו-<code>asset</code> נושאת
+      <code>scope_decision_id</code> בעל <code>NOT NULL</code>.</li>
+</ul>
+<p><strong>טבלאות ליבה (בקיצור):</strong> <code>program</code>, <code>scope_snapshot</code> (+
+<code>raw_yaml_sha256</code>), <code>run</code>, <code>scope_decision</code>; <code>agent</code>,
+<code>skill</code>, <code>tool</code>, <code>tool_invocation</code>; <code>asset</code> פולימורפי
+(kind ∈ domain/subdomain/host/ip/port/service/url/endpoint, <code>identity_key</code> UNIQUE,
+<code>scope_status</code>, <code>resolve_state</code>, <code>probe_state</code>),
+<code>asset_edge</code>, <code>asset_sighting</code>; <code>finding</code> (severity+rank,
+confidence, status, <code>triage_state</code>, <code>dedup_key</code> UNIQUE,
+<code>scope_decision_id</code> NOT NULL), <code>finding_asset</code>, <code>evidence</code> (מצביע
+blob מכותב-תוכן, מצונזר כברירת מחדל); <code>approvals</code>, <code>checkpoints</code>,
+<code>llm_analyses</code>.</p>
+<p><strong>שרשור השלבים הוא שאילתות תור-עבודה, לא הודעות.</strong> recon כותב <code>assets</code>;
+enum בוחר תת-דומיינים in-scope ממתינים ← כותב services; discovery ← ממצאים מועמדים; triage מבצע
+dedup/אימות; reporting קורא מאושרים. <strong>ההיקף מאומת-מחדש בקריאה</strong> — הסרת דומיין באמצע
+ריצה מפסיקה מיידית להפוך את תת-הדומיינים שלו לברי-פעולה. ראיות מצונזרות כברירת מחדל (תקציר ≤1KB);
+קובץ מאגר אחד לכל מעורבות, לבידוד הרשאה.</p>
+
+<!-- ===================== 10 ===================== -->
+<h2>10. מצאי הכלים והערבויות הלא-הרסניות</h2>
+<p>הכלים מוצהרים ב-<code>config/tools.yaml</code> (מנוהל-גרסאות, נסקר-קוד — זו מדיניות בטיחות).
+הסיווג הוא סמכותי ב-manifest. <strong>המגְנים נושאי-המשקל</strong> הם (1) argv הנבנה מ-allowlist
+הסגור <code>allowed_extra_flags</code>, (2) <code>forbidden_flags</code>, ו-(3) ה-egress ACL. דגל
+<code>-x=false</code> כפוי הוא הגנה-לעומק בלבד; <strong>ה-CI מאמת כל דגל forced/forbidden מול גרסת
+הכלי המוצמדת</strong> כך ששדרוג גרסה לא יכול להפוך ערובה ל-no-op בשקט.</p>
+<table>
+  <tr><th>כלי</th><th>מחלקה</th><th>שלב</th><th>כפוי (הגנה-לעומק)</th><th>אסור</th></tr>
+  <tr><td class="en">subfinder</td><td>passive</td><td>Recon</td><td>מקורות פסיביים בלבד (<code>-silent</code>)</td><td><code>-all</code>, resolution אקטיבי</td></tr>
+  <tr><td class="en">amass</td><td>passive</td><td>Recon</td><td><code>-passive</code></td><td><code>-active</code>, <code>-brute</code>, <code>-ip</code></td></tr>
+  <tr><td class="en">gau</td><td>passive</td><td>Recon</td><td>שליפת ארכיון בלבד (<code>--subs=false</code>)</td><td>מצבי live-probe</td></tr>
+  <tr><td class="en">httpx</td><td><strong>active</strong></td><td>Enum</td><td>קצב מה-broker; הפניות לא-מופעלות</td><td><code>-follow-redirects</code>/<code>-fr</code>/<code>-fhr</code></td></tr>
+  <tr><td class="en">naabu</td><td><strong>active</strong></td><td>Enum</td><td>connect-scan, קצב מה-broker, פורטים חסומים</td><td><code>-p-</code> (טווח-מלא), <code>-s</code> (SYN)</td></tr>
+  <tr><td class="en">katana</td><td><strong>active</strong></td><td>Enum</td><td>עומק-חסום, מוגבל-להיקף, קצב מה-broker</td><td>דגלי out-of-scope / redirect-follow</td></tr>
+  <tr><td class="en">nuclei</td><td><strong>active</strong></td><td>Discovery</td><td><code>-exclude-tags dos,intrusive,fuzzing,brute-force,rce,sqli</code>, <code>-no-interactsh</code>, <code>-dast=false</code>, קצב מה-broker</td><td><code>-include-tags/-fuzz/-dast/-payload/-code/-headless</code>; תגי-LLM מוצטלבים עם allowlist לאחר הדרות</td></tr>
+  <tr><td class="en">ffuf</td><td><strong>active</strong></td><td>Discovery</td><td><code>-recursion=false</code>, <code>-rate</code> מה-broker, wordlist חסום</td><td><code>-recursion*</code>, עקיפת <code>-rate</code>/<code>-t</code></td></tr>
+</table>
+<p>OAST/interactsh ו-egress שרירותי לצד-שלישי כבויים כברירת מחדל; כל ה-DNS של כלים אקטיביים נכפה דרך
+ה-resolver של הליבה. <code>nuclei</code>/<code>naabu</code>/<code>ffuf</code> רצים אך ורק דרך
+הפרופיל הבטוח הקנוני היחיד שלהם — אף רכיב אינו רשאי להריצם ישירות.</p>
+
+<!-- ===================== 11 ===================== -->
+<h2>11. קטלוג ה-Skills</h2>
+<p><strong>Skill</strong> הוא יחידת-התזמור הקטנה ביותר. <strong>כל Skill עוטף כלי אחד בדיוק</strong>
+ואינו רשאי לפרוש על-פני passive + active (זו הסיבה שהזחילה מפוצלת ל-<code>gau-archive</code>
+(פסיבי) ו-<code>crawl</code> (אקטיבי, katana)). תת-סוכן פולט <em>כוונת</em> (intent) Skill; הליבה
+מאמתת אותה מול קבוצת ה-Skills המותרים של הסוכן, מריצה כל יעד מחדש דרך שער-ההיקף, ורק אז מבצעת spawn.
+ה-LLM לעולם אינו קו-ההגנה האחרון.</p>
+<table>
+  <tr><th>Skill</th><th>שלב</th><th>מחלקה</th><th>עוטף</th><th>דורש אישור?</th></tr>
+  <tr><td class="en">subdomain-enum</td><td>recon</td><td>passive</td><td class="en">subfinder</td><td>לא</td></tr>
+  <tr><td class="en">amass-passive</td><td>recon</td><td>passive</td><td class="en">amass</td><td>לא</td></tr>
+  <tr><td class="en">gau-archive</td><td>recon</td><td>passive</td><td class="en">gau</td><td>לא</td></tr>
+  <tr><td class="en">liveness-probe</td><td>enumeration</td><td><strong>active</strong></td><td class="en">httpx</td><td><strong>כן</strong></td></tr>
+  <tr><td class="en">port-enum</td><td>enumeration</td><td><strong>active</strong></td><td class="en">naabu</td><td><strong>כן</strong></td></tr>
+  <tr><td class="en">crawl</td><td>enumeration</td><td><strong>active</strong></td><td class="en">katana</td><td><strong>כן</strong></td></tr>
+  <tr><td class="en">vuln-scan</td><td>discovery</td><td><strong>active</strong></td><td class="en">nuclei</td><td><strong>כן</strong></td></tr>
+  <tr><td class="en">fuzzing</td><td>discovery</td><td><strong>active</strong></td><td class="en">ffuf</td><td><strong>כן</strong></td></tr>
+  <tr><td class="en">triage</td><td>triage</td><td>none</td><td>—</td><td>לא (re-probe הוא פעולה נפרדת ומשוערת)</td></tr>
+  <tr><td class="en">report-gen</td><td>reporting</td><td>none</td><td>—</td><td>לא (אין מגע; לעולם לא משדר)</td></tr>
+</table>
+<p>כל מפרט Skill מצהיר: מטרה, קלט/פלט מטופסים (קריאות/כתיבות למאגר), הכלי הנעטף, בלוק
+<code>authorization</code> (<code>requires_authorized</code> / <code>requires_active_approval</code>
+/ <code>requires_passive_baseline</code>), עקרונות ה-<code>scope_check</code>, הערבויות הלא-הרסניות
+שלו, ובדיקות הרצות ללא יעד חי (חובה-לסרב out-of-scope, דגלי forced/forbidden, ואיסור-spawn-ללא-אישור).</p>
+<p><strong>מחזור החיים של asset (אוצר-המילים המשותף להעברה):</strong> <code>scope_status ∈ {in_scope,
+out_of_scope, unverified}</code> (מחושב out-of-scope-תחילה בכתיבה); <code>resolve_state ∈ {pending,
+resolved, unresolvable}</code> (נקבע על-ידי הליבה בשלב resolve-and-pin, המממש גם
+<code>kind=host</code>/<code>ip</code>); <code>probe_state ∈ {unprobed, live, dead}</code> (נקבע
+על-ידי <code>liveness-probe</code>). ה-<strong>בסיס הפסיבי (passive baseline)</strong> הוא שורת
+<code>assets</code> in-scope אשר <code>source ∈ {subfinder, amass, gau-archive}</code>.</p>
+
+<!-- ===================== 12 ===================== -->
+<h2>12. תת-הסוכנים וחוזה ההעברה</h2>
+<p>חמישה תת-סוכנים ממופים 1:1 לשלבים. כל אחד הוא יחידת-הסקה תחומה של LLM הקוראת
+<code>FindingsStoreView</code> מתוחם וקריאה-בלבד, מתכננת כוונות-Skill, וכותבת ממצאים מנורמלים —
+<strong>אף אחד אינו יכול לבצע דבר.</strong> ההעברה היא <strong>סטיגמרגית</strong>: סוכן משאיר שורות
+עם <code>status</code>; סוכן השלב הבא בוחר אותן כתור-עבודה. אין ערוץ סוכן-לסוכן.</p>
+<table>
+  <tr><th>סוכן</th><th>שלב</th><th>מחלקה</th><th>רשאי לקרוא ל-</th><th>צורך ← מייצר (דרך המאגר)</th></tr>
+  <tr><td class="en">recon</td><td>RECON</td><td>passive</td><td class="en">subdomain-enum, amass-passive, gau-archive</td><td class="en">scope seeds → assets(status=new, resolve_state=pending)</td></tr>
+  <tr><td><em>kernel resolve+pin</em></td><td>בין שלבים</td><td>—</td><td>—</td><td class="en">resolve_state=resolved, materialize host/ip</td></tr>
+  <tr><td class="en">enumeration</td><td>ENUMERATION</td><td><strong>active</strong></td><td class="en">liveness-probe, port-enum, crawl</td><td class="en">assets(new,resolved) → assets(enriched, probe_state=live|dead)</td></tr>
+  <tr><td class="en">vuln-discovery</td><td>DISCOVERY</td><td><strong>active</strong></td><td class="en">vuln-scan, fuzzing</td><td class="en">assets(enriched,live) → findings(candidate)</td></tr>
+  <tr><td class="en">triage</td><td>TRIAGE</td><td>none</td><td class="en">triage</td><td class="en">findings(candidate) → findings(validated|dismissed|duplicate)</td></tr>
+  <tr><td class="en">reporting</td><td>REPORTING</td><td>none</td><td class="en">report-gen</td><td class="en">findings(validated) → local report file</td></tr>
+</table>
+<ul>
+  <li><strong>קריטריוני-יציאה דטרמיניסטיים</strong> מקדמים כל שלב (ה-FSM, לעולם לא ה-LLM). לדוגמה:
+      recon עוצר כאשר שני מעברים פסיביים רצופים אינם מניבים assets חדשים in-scope (עם תקרת-מעברים
+      קשיחה); enumeration עוצר כאשר כל asset in-scope עבר probe או הוא <code>unresolvable</code>,
+      כולל endpoints חדשים שנזחלו; triage עוצר כאשר לא נותר מועמד וכל re-probe שהועלה הגיע למצב-קצה
+      (אושר+רץ, נדחה/פקע, או נמשך).</li>
+  <li><strong>סוכנים אקטיביים</strong> (<code>enumeration</code>, <code>vuln-discovery</code>)
+      דורשים <code>authorized==true</code> + אישור חד-פעמי פר-פעולה + egress מאומת + בסיס פסיבי, ללא
+      איגוד (batching) או הרחבה.</li>
+  <li><strong>Triage אינו נוגע ביעד כלל</strong>; re-probe מאשש שהוא <em>מעלה</em> נשלח כפעולה
+      אקטיבית נפרדת, קריאה-בלבד, המאושרת בדרג גבוה יותר. <strong>Reporting לעולם אינו משדר</strong> —
+      הוא מייצר קובץ מקומי; ההגשה נותרת פעולה אנושית מכוונת.</li>
+  <li><strong>ב-Resume</strong>, כוונה אקטיבית מאושרת-אך-לא-בוצעה עוברת re-gating מול ה-<code>scope.yaml</code>
+      הנוכחי ובדיקה חוזרת של <code>authorized==true</code>; ה-nonce החד-פעמי נשרף לפני ה-spawn, כך
+      שלעולם אינו משוחזר.</li>
+</ul>
+
+<!-- ===================== 13 ===================== -->
+<h2>13. מחסנית טכנולוגית</h2>
+<table>
+  <tr><th>נושא</th><th>בחירה</th><th>נימוק</th></tr>
+  <tr><td>שפה</td><td class="en">Python 3.11+, ruff + mypy (strict on scope/,tools/,kernel/) + pytest</td><td>הצעות/החלטות מטופסות הן בקרת-בטיחות</td></tr>
+  <tr><td>מנוע הסוכן</td><td class="en">Custom asyncio FSM</td><td>מחזור-החיים <em>הוא</em> מכונת-מצבים; שער/אישור כקוד-על-הקצוות</td></tr>
+  <tr><td>LLM</td><td class="en">anthropic SDK, tool-use לפלט מובנה, מאחורי Reasoner port</td><td>הסקה-בלבד; פלט-סכימה ← הצעות מאומתות-pydantic</td></tr>
+  <tr><td>תצורה/מודלים</td><td class="en">pydantic v2 + yaml.safe_load</td><td>פירוק מטופס כשל-סגור; <code>extra='forbid'</code>; <code>scope_config_hash</code></td></tr>
+  <tr><td>מאגר ממצאים</td><td class="en">stdlib sqlite3 (WAL)</td><td>אפס-תשתית, ACID, joins ל-chaining/dedup</td></tr>
+  <tr><td>יומן ביקורת</td><td class="en">JSONL, append-only, SHA-256 hash-chained</td><td>עמיד-לזיוף, בר-grep, בר-שחזור</td></tr>
+  <tr><td>הגבלת קצב</td><td class="en">token bucket + asyncio.Semaphore, גלובלי יחיד</td><td>נקודת-האכיפה היחידה לתקרות מצרפיות</td></tr>
+  <tr><td>תת-תהליך</td><td class="en">asyncio.create_subprocess_exec, shell=False, setrlimit, timeouts</td><td>רשימות argv בלבד; אין injection</td></tr>
+  <tr><td>Sandbox</td><td class="en">netns + nftables (Linux) / enforced allowlisting proxy (macOS)</td><td>egress ACL חובה — הקיר השני</td></tr>
+  <tr><td>Matcher</td><td class="en">custom + Public Suffix List + Hypothesis</td><td>גבולות דומיין בר-רישום; קורפוס יריבי ב-CI</td></tr>
+  <tr><td>HITL / CLI</td><td class="en">typer + rich</td><td>הנחיית-אישור מפורטת המציגה argv מדויק + diff היקף</td></tr>
+</table>
+
+<!-- ===================== 14 ===================== -->
+<h2>14. סכימת התצורה</h2>
+<p><strong><code>config/scope.yaml</code></strong> (git-ignored, לכל-מעורבות) — מקור-הסמכות היחיד.
+שדות: <code>program{name, platform, policy_url, authorized_until, last_verified_at}</code>,
+<code>authorized</code> (bool), <code>in_scope{domains, subdomains, ip_ranges}</code>,
+<code>scope_semantics{ip_ranges_mode}</code>, <code>out_of_scope{domains, subdomains, ip_ranges,
+notes}</code>, <code>rate_limits{requests_per_second, max_concurrency}</code>,
+<code>active_actions_allowed</code> (bool), <code>notes</code>.</p>
+<p><strong>תוספות שאומצו בסשן זה</strong> (תואמות-לאחור, ברירת-מחדל קפדנית/בטוחה):</p>
+<ul>
+  <li><code>program.authorized_until</code> / <code>last_verified_at</code> — השער עוצר-אוטומטית
+      (auto-HALT) על תוכנית מיושנת/פקועה.</li>
+  <li><code>scope_semantics.ip_ranges_mode: boundary</code> — <code>ip_ranges</code> הוא גבול קשיח
+      (שם in-scope חייב להיפתר גם לתוך טווח in-scope), לא רק קבוצת-היתר נוספת.</li>
+</ul>
+<p><strong><code>config/tools.yaml</code></strong> (מנוהל-גרסאות) — manifests הצהרתיים של כלים: סיווג,
+<code>target_params</code>, <code>forced_flags</code>, <code>forbidden_flags</code>,
+<code>allowed_extra_flags</code>, <code>rlimits</code>, timeouts. מנוהל-גרסאות ונסקר-קוד כי הוא
+<em>מדיניות בטיחות</em>, נפרד מ-<code>scope.yaml</code> הספציפי-ליעד.</p>
+<p>שני תבניות ה-<code>.example.yaml</code> מסופקות; תצורה אמיתית חייבת להיבדל מהתבנית ב-content hash,
+אחרת המנוע מסרב לרוץ.</p>
+
+<!-- ===================== 15 ===================== -->
+<h2>15. החלטות שננעלו ופסיקות</h2>
+<ol>
+  <li><code>ip_ranges</code> הוא <strong>גבול קשיח</strong>; out-of-scope גובר על-פני שני הממדים —
+      השם וה-IP.</li>
+  <li><code>*.example.com</code> <strong>מוציא את ה-apex החשוף</strong> <code>example.com</code> (יש
+      לרשום תחת <code>domains</code>); תווים-כלליים מתאימים על גבולות דומיין בר-רישום (PSL).</li>
+  <li><strong>כלים שאי-אפשר להצמיד מסורבים לשימוש אקטיבי</strong> (מוגבלים ל-passive + egress-ACL).</li>
+  <li><strong>מגן סירוב-להרצה:</strong> המנוע מסרב-קשיח אם <code>scope.yaml</code> תואם את התבנית
+      המסופקת ב-content-hash sentinel.</li>
+  <li><strong>עצירה-אוטומטית על מיושנוּת</strong> דרך <code>authorized_until</code> /
+      <code>last_verified_at</code>.</li>
+  <li><code>config/tools.yaml</code> הוא מדיניות בטיחות <strong>מנוהלת-גרסאות</strong>.</li>
+  <li><strong>httpx הוא אקטיבי</strong>; "פסיבי" משמעו אפס מגע ביעד; הסיווג הוא תכונת manifest סטטית,
+      לעולם לא נגזרת מפלט LLM.</li>
+  <li><strong>מגביל-קצב גלובלי-יחיד לתהליך</strong>; מגבילים פר-כלי אסורים.</li>
+  <li>קטלוג ה-Skills הורחב מ-7 ל-<strong>10</strong> — כלל הכלי-האחד פיצל את crawl-and-endpoints
+      ל-<code>gau-archive</code> + <code>crawl</code>, ונוספו <code>amass-passive</code> +
+      <code>port-enum</code>.</li>
+</ol>
+
+<!-- ===================== 16 ===================== -->
+<h2>16. שאלות פתוחות וסיכונים שיוריים</h2>
+<p>מסומנות להכרעה לפני / במהלך המימוש:</p>
+<ul>
+  <li><strong>הדרות <code>out_of_scope</code> מובְנות</strong> — עד לאימוץ, הערות בשפה טבעית (למשל
+      "אין endpoints של צד-שלישי לתשלומים") מוצגות מילה-במילה בכל אישור + בדיקה מקדימה ייעוצית-בלבד
+      של ה-LLM; הן אינן נאכפות מכנית.</li>
+  <li><strong><code>dns_resolution_policy</code></strong> — האם שם in-scope הנפתר ל-IP לא-רשום
+      (לא-פרטי) נדחה-אוטומטית או נשאל (IP-ים פרטיים/metadata תמיד מסורבים-קשיח).</li>
+  <li><strong>שלמות שרשרת-אספקה</strong> — בינארי כלי מודבק/מתעדכן-אוטומטית נתפס רק על-ידי ה-egress
+      ACL; נדרש בינארים מוצמדים + checksums וכיבוי עדכון-אוטומטי.</li>
+  <li><strong>מפתח חתימת אסימון-האישור</strong> (HMAC) — אחסון וסבב; נדרש תכן מבוסס OS-keychain.</li>
+  <li><strong>קטיעת זנב יומן-הביקורת</strong> — שרשרת-hash פשוטה אינה מזהה קטיעה מלאה של הזנב; יש
+      לחתום על ראש-השרשרת או לעגן מחוץ-לתיבה.</li>
+  <li><strong>מתג-הרג גלובלי / עצירת-חירום</strong> לביטול מיידי של כל ה-ALLOW-ים והאסימונים
+      הלא-שרופים באמצע ריצה.</li>
+  <li><strong>ערוץ ממשק-האישור</strong> (הנחיית CLI מול file-drop מול webhook) וסמנטיקת ה-resume שלו.</li>
+  <li><strong>הגברת OSINT צד-שלישי</strong> — הבטחה שמקורות פסיביים לא יהפכו לוקטור הגברה.</li>
+</ul>
+
+<!-- ===================== 17 ===================== -->
+<h2>17. מפת דרכים למימוש</h2>
+<p>הסדר הנכון בונה תחילה את הרכיבים נושאי-המשקל וחסרי-ה-LLM, ובודק אותם יריבית, לפני שדבר יכול לגעת
+ברשת.</p>
+<ol>
+  <li><strong>Matcher + Validator של שער-ההיקף בליבה</strong> — מודלי pydantic ל-<code>scope.yaml</code>/<code>tools.yaml</code>;
+      נרמול; סדר-ההכרעה (out-of-scope-תחילה, wildcard/PSL, CIDR); בדיקות-תכונה של Hypothesis +
+      קורפוס ~50-המקרים "חובה-לסרב" כשער-מיזוג ב-CI. <em>(אין רשת, אין LLM.)</em></li>
+  <li><strong>מאגר ממצאים + יומן-ביקורת משורשר-hash</strong> — כותבי-ליבה בלבד; סכימה מ-§9;
+      rebuild-from-log.</li>
+  <li><strong>מגבר-קצב + sandbox/egress</strong> — token-bucket+semaphore גלובלי יחיד; egress ACL
+      הנוצר מ-<code>scope.yaml</code>; בדיקת CI המוודאת policy-allows == egress-allows וקצב מצרפי
+      ≤ תקרות.</li>
+  <li><strong>בסיס ToolWrapper + מפרטי כלים</strong> — מחזור-החיים הקבוע עם שער-ההיקף המנדטורי;
+      dry-run.</li>
+  <li><strong>ברוקר-אישורים</strong> — האסימון החד-פעמי הכבול-לטביעת-אצבע; התנהגות כשל-סגור
+      לא-אינטראקטיבית.</li>
+  <li><strong>Orchestrator FSM</strong> — מכונת-מצבי-השלב, checkpointing, re-gating ב-resume.</li>
+  <li><strong>Reasoner port + תת-סוכנים + Skills</strong> — שכבת ה-LLM הלא-מהימנה, אחרונה, על-גבי
+      ליבה מוכחת.</li>
+</ol>
+<blockquote>אבן-הדרך 1 היא בעלת המנוף הגבוה ביותר: כל השאר בוטח ב-matcher. הוא חייב להיות נכון לפני
+שמנה בודדת אי-פעם אפשרית.</blockquote>
+
+<!-- ===================== GLOSSARY ===================== -->
+<h2>נספח: מילון מונחים (Glossary)</h2>
+<table>
+  <tr><th>אנגלית</th><th>עברית / הסבר</th></tr>
+  <tr><td class="en">scope-gate</td><td>שער ההיקף — נקודת-החנק המאמתת כל פעולה מול scope.yaml</td></tr>
+  <tr><td class="en">trusted kernel</td><td>הליבה המהימנה — הרכיב היחיד המחזיק subprocess/socket/DB-write</td></tr>
+  <tr><td class="en">fail-closed</td><td>כשל-סגור — ספק/עמימות/שגיאה מובילים לסירוב, לעולם לא להיתר</td></tr>
+  <tr><td class="en">passive / active</td><td>פסיבי (אפס מגע ביעד) / אקטיבי (מנה לתשתית היעד)</td></tr>
+  <tr><td class="en">egress ACL</td><td>רשימת בקרת יציאה רשתית — הקיר השני, נוצר מ-scope.yaml</td></tr>
+  <tr><td class="en">provenance</td><td>שרשרת-מקור — עקיבות מלאה מכל ממצא אל הריצה שיצרה אותו</td></tr>
+  <tr><td class="en">stigmergic hand-off</td><td>העברה סטיגמרגית — מסירה דרך המאגר (status כתור-עבודה), לא הודעות</td></tr>
+  <tr><td class="en">resolve-once-and-pin</td><td>פתירה-פעם-והצמדה — הקפאת ה-IP למניעת DNS rebinding (TOCTOU)</td></tr>
+  <tr><td class="en">wildcard</td><td>תו-כללי — התאמת <code>*.example.com</code> על גבולות PSL</td></tr>
+  <tr><td class="en">approval token / grant</td><td>אסימון אישור — חד-פעמי, לא-מרחיב, כבול לטביעת-אצבע של הפקודה</td></tr>
+  <tr><td class="en">passive baseline</td><td>בסיס פסיבי — תצפית פסיבית נדרשת למארח לפני כל פעולה אקטיבית</td></tr>
+  <tr><td class="en">findings store</td><td>מאגר הממצאים — מקור-האמת ב-SQLite המשרשר תוצאות בין שלבים</td></tr>
+  <tr><td class="en">responsible disclosure</td><td>גילוי אחראי — מסירת הממצאים לבעל התוכנית</td></tr>
+  <tr><td class="en">Skill / sub-agent</td><td>יחידת יכולת עוטפת-כלי / יחידת-הסקה תחומה בבעלות שלב</td></tr>
+</table>
+<p class="cap">הערה: שמות קבצים, שדות תצורה, שמות כלים (subfinder/httpx/nuclei וכו'), דגלי CLI, ומזהי
+מצב/סטטוס נשמרו באנגלית ובכיווניות LTR בתוך הפריסה ה-RTL, כמקובל בתיעוד טכני.</p>
+
+</body>
+</html>
