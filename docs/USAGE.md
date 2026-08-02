@@ -29,20 +29,34 @@ external tools**. Optional heavier tools (subfinder, nuclei, …) are used only 
 
 ### Step 1 — Import a program's scope
 
-Point it at a HackerOne/Bugcrowd program (URL) or a saved scope JSON/page (file):
+Point it at a HackerOne/Bugcrowd program (URL), a saved scope JSON, **or a plain text file**:
 
 ```bash
-bbagent import https://hackerone.com/acme        --out config/scope.yaml
-bbagent import ./acme_scope.json                 --out config/scope.yaml --name "Acme BBP"
+bbagent import https://hackerone.com/acme        --out config/scope.yaml   # try the URL
+bbagent import ./acme_scope.json                 --out config/scope.yaml   # structured JSON (best)
+bbagent import ./scope.txt                       --out config/scope.yaml   # one target per line
 ```
 
 This writes a **draft** `config/scope.yaml` with `authorized: false` and
 `active_actions_allowed: false` on purpose. The importer only fills `in_scope` / `out_of_scope`.
 
-> Live program pages are JavaScript apps and cannot always be scraped reliably. The robust path is
-> to save the program's **structured scope JSON** (HackerOne structured scopes / Bugcrowd target
-> groups) to a file and import that. If a page can't be parsed, the importer **fails closed** and
-> tells you — it never guesses an empty or partial scope.
+> **Most program pages (Bugcrowd, and much of HackerOne) load their scope behind login / JavaScript,
+> so an anonymous URL fetch can't see it.** The importer now filters aggressively (it will never turn
+> `app-x.js`, `favicon.ico`, or the platform's own domains into scope), and if it can't get a
+> reliable scope it **fails closed** with guidance. The **reliable path** is a small file:
+>
+> - **Plain text** (easiest): copy the in-scope targets from the logged-in program page into
+>   `scope.txt`, one per line. `#` = comment, `!` prefix = out-of-scope:
+>   ```
+>   # Skyscanner
+>   *.skyscanner.net
+>   www.skyscanner.net
+>   !careers.skyscanner.net
+>   ```
+> - **Structured JSON**: HackerOne structured scopes / Bugcrowd target groups, saved to a `.json`.
+>
+> A low-confidence URL scrape is written with a loud warning and is almost certainly incomplete —
+> treat it as a starting point and add the real wildcards from the policy page.
 
 ### Step 2 — Review the draft (required)
 

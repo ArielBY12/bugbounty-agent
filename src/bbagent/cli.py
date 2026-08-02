@@ -66,6 +66,7 @@ def import_cmd(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(scope_to_yaml(config))
     console.print(f"[green]Wrote scope draft:[/] {out}")
+    n_in = len(config.in_scope.domains) + len(config.in_scope.subdomains) + len(config.in_scope.ip_ranges)
     console.print(
         Panel(
             f"in_scope: {len(config.in_scope.domains)} domains, "
@@ -76,6 +77,14 @@ def import_cmd(
             title="review required", border_style="yellow",
         )
     )
+    if config.notes and "LOW CONFIDENCE" in config.notes:
+        console.print(
+            "[red]⚠ Low-confidence import.[/] This program loads its full scope behind login/JS, so only "
+            f"{n_in} entr{'y' if n_in == 1 else 'ies'} could be scraped and it is likely INCOMPLETE.\n"
+            "  For a reliable scope: copy the in-scope targets from the (logged-in) program page into a "
+            "text file (one per line, e.g. [cyan]*.skyscanner.net[/]) and run "
+            "[cyan]bbagent import scope.txt[/]."
+        )
 
 
 def _load(scope: pathlib.Path):
