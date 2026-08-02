@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from bbagent.importer import ImportError_, import_from_url, parse_bugcrowd, parse_hackerone
+from bbagent.importer import (
+    ImportError_,
+    import_from_file,
+    import_from_url,
+    parse_bugcrowd,
+    parse_hackerone,
+)
 from bbagent.scope.matcher import ScopeMatcher
 from bbagent.scope.models import Verdict
 
@@ -72,3 +78,51 @@ def test_import_from_url_uses_injected_fetch():
 def test_empty_scope_fails_closed():
     with pytest.raises(ImportError_):
         import_from_url("https://hackerone.com/x", fetch=lambda url: "<html>nothing here</html>")
+
+
+def test_html_scrape_drops_file_and_vendor_noise():
+    # Mirrors the real Bugcrowd bug: build assets + platform/CDN domains must NOT become scope.
+    from bbagent.importer.core import _sniff_and_parse
+
+    page = (
+        "<html><body data-react-props=''>"
+        "app-f5090a85.js fames.json main-59167270.css favicon.ico logo.png opensearch.xml "
+        "https://bugcrowd.com/x www.w3.org assets.bugcrowdusercontent.com disclose.io "
+        "*.skyscanner.net api.skyscanner.net"
+        "</body></html>"
+    )
+    d = _sniff_and_parse(page)
+    hosts = d.in_domains | d.in_subdomains
+    # real scope kept:
+    assert "*.skyscanner.net" in d.in_subdomains
+    # every junk class dropped:
+    assert not any(h.endswith((".js", ".json", ".css", ".ico", ".png", ".xml")) for h in hosts)
+    assert "bugcrowd.com" not in d.in_domains
+    assert "w3.org" not in d.in_domains
+    assert "disclose.io" not in d.in_domains
+    assert not any("bugcrowdusercontent" in h for h in hosts)
+
+
+def test_plaintext_import(tmp_path):
+    p = tmp_path / "scope.txt"
+    p.write_text("# skyscanner scope\n*.skyscanner.net\napi.skyscanner.net\n!images.skyscanner.net\n")
+    cfg = import_from_file(str(p), program_name="Sky")
+    assert "*.skyscanner.net" in cfg.in_scope.subdomains
+    assert "api.skyscanner.net" in cfg.in_scope.subdomains
+    assert "images.skyscanner.net" in cfg.out_of_scope.subdomains
+    assert cfg.authorized is False
+
+
+def test_embedded_json_scope_is_parsed():
+    # A page that embeds structured targets (HackerOne-style) in a script tag.
+    page = (
+        '<html><script type="application/json">'
+        '{"scopes":[{"asset_identifier":"*.acme.com","asset_type":"WILDCARD","eligible_for_submission":true},'
+        '{"asset_identifier":"vendor.js","asset_type":"OTHER","eligible_for_submission":true}]}'
+        "</script></html>"
+    )
+    from bbagent.importer.core import _sniff_and_parse
+
+    d = _sniff_and_parse(page)
+    assert "*.acme.com" in d.in_subdomains
+    assert not any(h.endswith(".js") for h in d.in_domains | d.in_subdomains)

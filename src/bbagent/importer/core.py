@@ -27,6 +27,17 @@ from bbagent.scope.models import (
 
 _HOST_RE = re.compile(r"(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}", re.IGNORECASE)
 
+# Platform / CDN / common-vendor domains that are never a program's scope.
+_DENY_SUBSTR = (
+    "bugcrowd", "hackerone", "intigriti", "yeswehack", "gstatic", "cloudflare", "cloudfront",
+    "jsdelivr", "cdnjs", "recaptcha", "googleapis", "gravatar", "fontawesome", "googletagmanager",
+)
+_DENY_DOMAINS = {"w3.org", "schema.org", "disclose.io", "google.com", "googleusercontent.com"}
+
+
+def _denylisted(registrable: str) -> bool:
+    return registrable in _DENY_DOMAINS or any(s in registrable for s in _DENY_SUBSTR)
+
 
 class ImportError_(RuntimeError):
     """Raised when a program page/JSON cannot be parsed into a scope."""
@@ -70,7 +81,15 @@ class ScopeDraft:
             self.warnings.append(f"unparseable host asset skipped: {identifier!r}")
             return
         canon = ("*." + canon_base) if wildcard else canon_base
-        is_sub = wildcard or (registrable_domain(canon_base) not in ("", canon_base))
+        reg = registrable_domain(canon_base)
+        if not reg:
+            # No valid public-suffix TLD -> this is a file name (app-x.js, fames.json), not a host.
+            self.warnings.append(f"skipped non-domain token (no valid TLD): {identifier!r}")
+            return
+        if _denylisted(reg):
+            self.warnings.append(f"skipped platform/vendor domain: {identifier!r}")
+            return
+        is_sub = wildcard or (reg != canon_base)
         if in_scope:
             (self.in_subdomains if is_sub else self.in_domains).add(canon)
         else:
@@ -99,8 +118,15 @@ class ScopeDraft:
                 notes=self.notes,
             ),
             rate_limits=RateLimits(requests_per_second=1, max_concurrency=1),
-            notes="Imported draft — REVIEW against the policy page, then set authorized/active flags.",
+            notes=self._notes_text(),
         )
+
+    def _notes_text(self) -> str:
+        text = "Imported draft — REVIEW against the policy page, then set authorized/active flags."
+        skipped = [w for w in self.warnings if "skipped" not in w]  # keep the loud, non-noisy warnings
+        for w in skipped[:6]:
+            text += f"\nWARNING: {w}"
+        return text
 
 
 def _looks_like_ip(s: str) -> bool:
@@ -157,15 +183,96 @@ def parse_bugcrowd(data: dict) -> ScopeDraft:
     return draft
 
 
-def _parse_html_best_effort(text: str) -> ScopeDraft:
-    """Last resort: pull candidate hosts out of a saved page. Everything is low-confidence."""
+def _iter_embedded_json(text: str):
+    """Yield parsed JSON from ``data-react-props="..."`` attrs and ``<script type=application/json>``."""
+    import html as _html
+
+    for m in re.finditer(r'data-react-props="(.*?)"', text, re.DOTALL):
+        try:
+            yield json.loads(_html.unescape(m.group(1)))
+        except Exception:
+            continue
+    for m in re.finditer(r'<script[^>]+application/(?:json|ld\+json)[^>]*>(.*?)</script>', text, re.DOTALL | re.I):
+        try:
+            yield json.loads(m.group(1).strip())
+        except Exception:
+            continue
+
+
+def _targets_from_json(obj) -> List:
+    """(identifier, in_scope) pairs from nested target dicts that carry a scope/category signal."""
+    out: List = []
+
+    def walk(node, inscope: bool) -> None:
+        if isinstance(node, dict):
+            name = node.get("asset_identifier") or node.get("name") or node.get("uri")
+            has_signal = any(k in node for k in ("category", "asset_type", "eligible_for_submission", "in_scope", "inScope"))
+            if isinstance(name, str) and has_signal:
+                elig = node.get("eligible_for_submission", node.get("in_scope", node.get("inScope", inscope)))
+                out.append((name, bool(elig)))
+            for k, v in node.items():
+                ins = inscope
+                kl = k.lower() if isinstance(k, str) else ""
+                if "out_of_scope" in kl or "outofscope" in kl or "ineligible" in kl:
+                    ins = False
+                elif "in_scope" in kl or "eligible" in kl:
+                    ins = True
+                walk(v, ins)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, inscope)
+
+    walk(obj, True)
+    return out
+
+
+def _parse_embedded(text: str) -> Optional[ScopeDraft]:
     draft = ScopeDraft()
-    for match in _HOST_RE.findall(text):
+    for obj in _iter_embedded_json(text):
+        for ident, ins in _targets_from_json(obj):
+            draft.add(ident, in_scope=ins)
+    if draft.is_empty():
+        return None
+    draft.warnings.append("Scope parsed from embedded page data — verify against the policy page.")
+    return draft
+
+
+def _parse_plaintext(text: str) -> ScopeDraft:
+    """One target per line. ``#`` = comment, ``!`` prefix = out-of-scope."""
+    draft = ScopeDraft()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            draft.add(line[1:].strip(), in_scope=False)
+        else:
+            draft.add(line, in_scope=True)
+    if draft.is_empty():
+        raise ImportError_("no valid in-scope targets found in the file")
+    return draft
+
+
+_SCRAPE_HELP = (
+    "Could not extract a reliable scope from this page. Programs like Bugcrowd/HackerOne load their "
+    "scope behind login/JavaScript, so an anonymous fetch cannot see it. Copy the in-scope targets "
+    "into a text file (one per line, e.g. *.example.com), or save the program's scope JSON, then run: "
+    "bbagent import <file>"
+)
+
+
+def _parse_html_best_effort(text: str) -> ScopeDraft:
+    """Last resort: pull candidate hosts from page text (after strict PSL + denylist filtering)."""
+    import html as _html
+
+    draft = ScopeDraft()
+    for match in sorted(set(_HOST_RE.findall(_html.unescape(text)))):
         draft.add(match, in_scope=True)
     if draft.is_empty():
-        raise ImportError_("could not extract any scope from the page — save the program's scope JSON instead")
+        raise ImportError_(_SCRAPE_HELP)
     draft.warnings.append(
-        "LOW CONFIDENCE: scope was scraped from raw HTML. Review every entry against the policy page."
+        "LOW CONFIDENCE: no structured scope was available, so this was scraped from page text and "
+        "is likely INCOMPLETE. Verify every entry and add wildcards from the policy page."
     )
     return draft
 
@@ -174,14 +281,19 @@ def _sniff_and_parse(text: str, platform_hint: str = "") -> ScopeDraft:
     text = text.strip()
     if text[:1] in ("{", "["):
         data = json.loads(text)
-        # Try both structured shapes.
         for parser in (parse_hackerone, parse_bugcrowd):
             try:
                 return parser(data if isinstance(data, dict) else {"data": data})
             except ImportError_:
                 continue
         raise ImportError_("JSON did not match a known HackerOne/Bugcrowd scope shape")
-    return _parse_html_best_effort(text)
+    head = text[:2000].lower()
+    if "<" in text[:2000] and ("<html" in head or "data-react" in head or "<script" in head):
+        embedded = _parse_embedded(text)
+        if embedded is not None:
+            return embedded
+        return _parse_html_best_effort(text)
+    return _parse_plaintext(text)
 
 
 def _platform_of(url: str) -> str:
