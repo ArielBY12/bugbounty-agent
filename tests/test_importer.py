@@ -126,3 +126,74 @@ def test_embedded_json_scope_is_parsed():
     d = _sniff_and_parse(page)
     assert "*.acme.com" in d.in_subdomains
     assert not any(h.endswith(".js") for h in d.in_domains | d.in_subdomains)
+
+
+# ---- generic Markdown brief importer ----------------------------------------------------
+
+_BRIEF = """---
+program: Acme BBP
+platform: bugcrowd
+policy_url: https://bugcrowd.com/acme
+authorized_until: 2026-12-31
+last_verified_at: 2026-08-02
+requests_per_second: 2
+max_concurrency: 3
+---
+
+# Acme — Program Brief
+
+## In scope
+acme.com
+*.acme.com
+
+## Out of scope
+help.acme.com
+On acme.com/profile/* the Auth0 endpoints are out of scope.
+Host-header injection is out of scope unless it steals user data.
+
+## Rules
+MANDATORY: add header `X-Bug: me` to every request.
+Prohibited: DDoS and excessive automated scanning.
+"""
+
+
+def test_brief_import_scope_meta_and_notes(tmp_path):
+    p = tmp_path / "acme.brief.md"
+    p.write_text(_BRIEF)
+    cfg = import_from_file(str(p))
+    # front-matter meta flows through
+    assert cfg.program.name == "Acme BBP"
+    assert cfg.program.platform.value == "bugcrowd"
+    assert str(cfg.program.authorized_until) == "2026-12-31"
+    assert cfg.rate_limits.requests_per_second == 2 and cfg.rate_limits.max_concurrency == 3
+    # scope
+    assert "acme.com" in cfg.in_scope.domains
+    assert "*.acme.com" in cfg.in_scope.subdomains
+    assert "help.acme.com" in cfg.out_of_scope.subdomains
+    # instructions captured verbatim as notes
+    joined = " ".join(cfg.out_of_scope.notes)
+    assert "X-Bug: me" in joined
+    assert "DDoS" in joined
+    # never active by default
+    assert cfg.authorized is False and cfg.active_actions_allowed is False
+
+
+def test_brief_out_of_scope_prose_does_not_poison_apex(tmp_path):
+    """A sentence in Out-of-scope that names the in-scope apex must NOT exclude the apex."""
+    p = tmp_path / "acme.brief.md"
+    p.write_text(_BRIEF)
+    cfg = import_from_file(str(p))
+    # the apex is IN scope; the 'acme.com/profile/*' prose line became a note, not an exclusion
+    assert "acme.com" not in cfg.out_of_scope.domains
+    m = ScopeMatcher(cfg)
+    assert m.decide("acme.com").verdict is Verdict.ALLOW
+    assert m.decide("help.acme.com").verdict is Verdict.DENY_HALT
+
+
+def test_plaintext_with_hash_comment_still_plaintext(tmp_path):
+    """A one-per-line scope file with a '#' comment must not be misread as a brief."""
+    p = tmp_path / "scope.txt"
+    p.write_text("# my scope\n*.acme.com\n!images.acme.com\n")
+    cfg = import_from_file(str(p))
+    assert "*.acme.com" in cfg.in_scope.subdomains
+    assert "images.acme.com" in cfg.out_of_scope.subdomains
