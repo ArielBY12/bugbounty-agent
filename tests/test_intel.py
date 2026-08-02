@@ -77,6 +77,32 @@ def test_dead_name_only_host_is_capped_low():
     assert p.tier == "low"
 
 
+def test_takeover_signal_high_when_dangling():
+    p = score_host(HostInput("old.example.com", cname_chain=["bkt.s3.amazonaws.com"], resolves=False))
+    assert any("takeover" in r.lower() for r in p.reasons())
+    assert p.tier in ("high", "critical")
+
+
+def test_cors_credentialed_header_signal():
+    p = score_host(HostInput("app.example.com", headers={
+        "access-control-allow-origin": "https://evil.example.org",
+        "access-control-allow-credentials": "true",
+    }))
+    assert any("CORS" in r for r in p.reasons())
+
+
+def test_open_redirect_header_signal():
+    p = score_host(HostInput("app.example.com", headers={"location": "https://evil.example.org/x"}))
+    assert any("off-host" in r for r in p.reasons())
+
+
+def test_version_range_matching():
+    inside = score_host(HostInput("a.example.com", server="Apache/2.4.50"))
+    outside = score_host(HostInput("a.example.com", server="Apache/2.4.51"))
+    assert any("CVE-2021-41773" in r for r in inside.reasons())
+    assert not any("CVE-2021-41773" in r for r in outside.reasons())
+
+
 def test_render_focus_map_groups_by_tier():
     items = [
         HostInput("admin.example.com", status_code=401, probe_state="live", paths=["/.env"]),

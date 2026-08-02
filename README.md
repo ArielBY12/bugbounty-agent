@@ -12,9 +12,12 @@ everything is non-destructive; all actions are rate-limited and written to a has
 
 ## Status
 
-**Working MVP.** The safety kernel, scope importer, passive recon (subdomains + archived URLs),
-gated active enumeration, and a prioritized **focus map** are implemented and tested (91 tests,
-incl. an adversarial must-refuse corpus + Hypothesis property tests).
+**Working MVP.** Safety kernel, scope importer, passive recon (subdomains + archived URLs), gated
+active enumeration (liveness + DNS), authenticated probing, and a prioritized **focus map** —
+scoring naming, exposed paths, URL params (IDOR/SSRF/LFI), CORS/open-redirect, version→CVE, and
+dangling-CNAME subdomain-takeover. nuclei ships as a gated safe-profile planner behind an active
+egress-containment check. Tested with 117 tests (incl. an adversarial must-refuse corpus +
+Hypothesis property tests).
 
 ## Quickstart
 
@@ -40,9 +43,9 @@ binding operating contract is [CLAUDE.md](CLAUDE.md).
 
 ```
 src/bbagent/  scope/ (matcher, canonicalization, loader) · store/ (sqlite + hash-chained audit)
-              kernel/ (rate governor, approval, gate) · tools/ (passive sources, liveness probe,
-              nuclei planner) · intel/ (signals, scoring, focus-map) · reason/ (hypotheses port)
-              importer/ (HackerOne/Bugcrowd -> scope draft) · orchestrator/ (the FSM) · cli.py
+              kernel/ (rate governor, approval, gate, auth, egress sandbox) · tools/ (passive
+              sources, liveness probe, DNS, nuclei planner) · intel/ (signals, scoring, focus-map)
+              reason/ (hypotheses) · importer/ (HackerOne/Bugcrowd -> scope) · orchestrator/ · cli.py
 config/       scope.example.yaml · tools.example.yaml   (tracked; scope.yaml is git-ignored)
 tests/        scope corpus, property tests, store, kernel, orchestrator, importer, loader
 skills/ agents/   declarative skill & sub-agent specs (design)

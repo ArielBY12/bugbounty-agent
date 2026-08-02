@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from bbagent.kernel.approval import AutoDenyProvider, FixedGrantProvider
+from bbagent.kernel.auth import AuthProfile
 from bbagent.kernel.rate import RateGovernor
 from bbagent.orchestrator import Orchestrator
 from bbagent.store.models import ScopeStatus
+from bbagent.tools.dns import DnsResult
 from bbagent.tools.probes import ProbeResult
+
+
+def _fake_dns(host):
+    return DnsResult(host, ["93.184.216.10"], [], True)
 
 
 class FakeSource:
@@ -39,10 +45,11 @@ class FakeUrls:
         return self.mapping.get(domain, [])
 
 
-def _orch(config, tmp_path, url_sources=None, **kw):
+def _orch(config, tmp_path, url_sources=None, dns_fn=None, **kw):
     return Orchestrator(
         config, tmp_path / "eng", passive_sources=[_source()],
         url_sources=url_sources if url_sources is not None else [],  # no network in tests
+        dns_fn=dns_fn or _fake_dns,  # no DNS network in tests
         governor=_fast_governor(), **kw,
     )
 
@@ -108,6 +115,56 @@ def test_recon_ingests_urls_and_builds_focus_map(scope_config, tmp_path):
     # admin host with an exposed .git path should rank at/near the top.
     assert summary.focus_top[0][0] == "admin.example.com"
     assert ".git" in md
+
+
+def test_takeover_from_dangling_cname(scope_config, tmp_path):
+    hosts = FakeSource({"example.com": ["old.example.com", "a.example.com"]})
+
+    def dns(host):
+        if host == "old.example.com":
+            return DnsResult(host, [], ["oldbucket.s3.amazonaws.com"], resolves=False)  # dangling
+        return DnsResult(host, ["93.184.216.10"], [], True)
+
+    orch = Orchestrator(
+        scope_config, tmp_path / "eng", passive_sources=[hosts], url_sources=[], dns_fn=dns,
+        approval_provider=FixedGrantProvider(True), governor=_fast_governor(),
+        resolve_fn=lambda h: [] if h == "old.example.com" else ["93.184.216.10"],
+        probe_fn=lambda h, ip: ProbeResult(h, ip, alive=True, status_code=200),
+    )
+    orch.run(mode="full", analyze=True)
+    md = (tmp_path / "eng" / "focus-map.md").read_text()
+    assert "takeover" in md.lower()
+    assert "old.example.com" in md
+
+
+def test_cors_credentialed_signal_in_map(scope_config, tmp_path):
+    def probe(h, ip, **kw):
+        return ProbeResult(h, ip, alive=True, status_code=200, headers={
+            "access-control-allow-origin": "https://evil.example.org",
+            "access-control-allow-credentials": "true",
+        })
+
+    orch = _orch(scope_config, tmp_path, approval_provider=FixedGrantProvider(True),
+                 resolve_fn=lambda h: ["93.184.216.10"], probe_fn=probe)
+    orch.run(mode="full", analyze=True)
+    md = (tmp_path / "eng" / "focus-map.md").read_text()
+    assert "CORS" in md
+
+
+def test_auth_attached_only_to_inscope_probe(scope_config, tmp_path):
+    captured = {}
+
+    def probe(h, ip, auth_headers=None):
+        captured[h] = auth_headers
+        return ProbeResult(h, ip, alive=True, status_code=200)
+
+    orch = _orch(scope_config, tmp_path, approval_provider=FixedGrantProvider(True),
+                 resolve_fn=lambda h: ["93.184.216.10"], probe_fn=probe,
+                 auth=AuthProfile(headers={"Cookie": "s=1"}))
+    orch.run(mode="full")
+    # a/b are in-scope and got the cookie; blog (out-of-scope) never reached the probe at all.
+    assert captured.get("a.example.com") == {"Cookie": "s=1"}
+    assert "blog.example.com" not in captured
 
 
 def test_full_mode_denies_probe_on_private_resolution(scope_config, tmp_path):

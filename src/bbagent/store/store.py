@@ -128,6 +128,30 @@ class FindingsStore:
         row = self.db.execute("SELECT 1 FROM asset WHERE identity_key=?", (identity_key,)).fetchone()
         return row is not None
 
+    def update_asset_extra(self, identity_key: str, updates: dict) -> None:
+        """Merge ``updates`` into an asset's ``extra`` JSON (does not touch other columns)."""
+        import json as _json
+
+        row = self.db.execute("SELECT extra FROM asset WHERE identity_key=?", (identity_key,)).fetchone()
+        if row is None:
+            return
+        extra = _json.loads(row["extra"] or "{}")
+        extra.update(updates)
+        self.audit.append("asset_extra", {"identity_key": identity_key, "keys": sorted(updates)})
+        self.db.execute("UPDATE asset SET extra=? WHERE identity_key=?", (_json.dumps(extra), identity_key))
+        self.db.commit()
+
+    def update_asset_state(self, identity_key: str, **cols) -> None:
+        """Update the given state columns (resolve_state/probe_state/status/scope_decision_id)."""
+        allowed = {"resolve_state", "probe_state", "status", "scope_decision_id"}
+        sets = {k: v for k, v in cols.items() if k in allowed and v is not None}
+        if not sets:
+            return
+        self.audit.append("asset_state", {"identity_key": identity_key, **sets})
+        clause = ", ".join(f"{k}=?" for k in sets)
+        self.db.execute(f"UPDATE asset SET {clause} WHERE identity_key=?", (*sets.values(), identity_key))
+        self.db.commit()
+
     # ---- findings -----------------------------------------------------------------------
 
     def record_finding(self, finding: Finding) -> int:

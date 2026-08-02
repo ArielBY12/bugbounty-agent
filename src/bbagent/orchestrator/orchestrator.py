@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 from bbagent.intel import prioritize, render_focus_map
 from bbagent.intel.score import HostInput
 from bbagent.kernel.approval import ApprovalBroker, ApprovalProvider, ApprovalRequest, AutoDenyProvider
+from bbagent.kernel.auth import AuthProfile
 from bbagent.kernel.gate import Kernel, scope_status_for
 from bbagent.kernel.rate import RateGovernor
 from bbagent.reason.port import NullReasoner, Reasoner
@@ -31,8 +32,12 @@ from bbagent.scope.matcher import registrable_domain
 from bbagent.scope.models import ScopeConfig, Verdict
 from bbagent.store.models import Asset, AssetKind, ProbeState, ResolveState, ScopeStatus
 from bbagent.store.store import FindingsStore
+from bbagent.tools.dns import DnsResult, resolve_full
 from bbagent.tools.probes import ProbeResult, http_liveness, resolve_ips
 from bbagent.tools.sources import PassiveSource, UrlSource, default_passive_sources, default_url_sources
+
+# Response headers worth persisting for signal analysis (never credentials).
+_KEEP_HEADERS = ("access-control-allow-origin", "access-control-allow-credentials", "x-powered-by", "location", "server")
 
 
 @dataclass
@@ -72,8 +77,10 @@ class Orchestrator:
         url_sources: Optional[List[UrlSource]] = None,
         approval_provider: Optional[ApprovalProvider] = None,
         reasoner: Optional[Reasoner] = None,
-        probe_fn: Callable[[str, str], ProbeResult] = http_liveness,
+        probe_fn: Callable[..., ProbeResult] = http_liveness,
         resolve_fn: Callable[[str], List[str]] = resolve_ips,
+        dns_fn: Callable[[str], DnsResult] = resolve_full,
+        auth: Optional[AuthProfile] = None,
         governor: Optional[RateGovernor] = None,
         now: Optional[str] = None,
     ) -> None:
@@ -90,6 +97,8 @@ class Orchestrator:
         self.reasoner = reasoner or NullReasoner()
         self.probe_fn = probe_fn
         self.resolve_fn = resolve_fn
+        self.dns_fn = dns_fn
+        self.auth = auth
         self._now = now or _dt.datetime.now(_dt.timezone.utc).isoformat()
 
     # ---- helpers ------------------------------------------------------------------------
@@ -204,11 +213,18 @@ class Orchestrator:
             if decision.verdict is not Verdict.ALLOW:
                 summary.messages.append(f"DENY on resolved IPs: {host} — {decision.reason}")
                 continue
+            # Credentials are attached ONLY here — to an in-scope, gate-ALLOWed, IP-pinned host.
+            auth_headers = self.auth.headers if (self.auth and not self.auth.is_empty()) else None
             with self.governor.lease():
-                result = self.probe_fn(host, ips[0])
+                if auth_headers:
+                    result = self.probe_fn(host, ips[0], auth_headers=auth_headers)
+                else:
+                    result = self.probe_fn(host, ips[0])
             summary.probed += 1
             probe_state = ProbeState.LIVE if result.alive else ProbeState.DEAD
-            extra = {"status_code": result.status_code, "server": result.server, "ip": ips[0]}
+            kept = {k: v for k, v in (result.headers or {}).items() if k in _KEEP_HEADERS}
+            extra = {"status_code": result.status_code, "server": result.server, "ip": ips[0],
+                     "headers": kept, "authenticated": bool(auth_headers)}
             self._update_probe(row, ResolveState.RESOLVED, probe_state, decision_id, extra)
             if result.alive:
                 summary.live_hosts += 1
@@ -216,16 +232,31 @@ class Orchestrator:
             summary.state = "AWAITING_APPROVAL"
             summary.messages.append("No active action was approved — nothing was sent to the target.")
 
+    def _dns_enrich(self, summary: RunSummary) -> None:
+        """DNS-only enrichment (CNAME chain + resolvability) for takeover detection. Runs only in
+        the authorized path, since resolving queries the target's nameservers."""
+        ok, _why = self.kernel.active_preconditions_ok()
+        if not ok:
+            return
+        for row in self.store.select_assets(scope_status=ScopeStatus.IN_SCOPE):
+            if row["kind"] not in (AssetKind.DOMAIN.value, AssetKind.SUBDOMAIN.value):
+                continue
+            ik = f"{row['kind']}:{row['value']}"
+            with self.governor.lease():
+                res = self.dns_fn(row["value"])
+            self.store.update_asset_extra(ik, {"cname_chain": res.cname_chain, "resolves": res.resolves})
+            if not res.resolves and res.cname_chain:
+                self.store.update_asset_state(ik, resolve_state=ResolveState.UNRESOLVABLE.value)
+
     def _update_probe(self, row, resolve_state, probe_state, decision_id, extra=None) -> None:
-        self.store.upsert_asset(
-            Asset(
-                kind=AssetKind(row["kind"]), value=row["value"], scope_status=ScopeStatus(row["scope_status"]),
-                source=row["source"], resolve_state=resolve_state, probe_state=probe_state,
-                status="enriched" if probe_state is not ProbeState.UNPROBED else "new",
-                scope_decision_id=decision_id if decision_id is not None else row["scope_decision_id"],
-                extra=extra or {},
-            )
+        ik = f"{row['kind']}:{row['value']}"
+        self.store.update_asset_state(
+            ik, resolve_state=resolve_state.value, probe_state=probe_state.value,
+            status="enriched" if probe_state is not ProbeState.UNPROBED else "new",
+            scope_decision_id=decision_id if decision_id is not None else row["scope_decision_id"],
         )
+        if extra:
+            self.store.update_asset_extra(ik, extra)
 
     def _analyze(self, summary: RunSummary) -> None:
         rows = self.store.select_assets(scope_status=ScopeStatus.IN_SCOPE)
@@ -249,6 +280,8 @@ class Orchestrator:
                 host=r["value"], status_code=extra.get("status_code"), server=extra.get("server"),
                 probe_state=r["probe_state"], paths=paths_by_host.get(r["value"], []),
                 queries=queries_by_host.get(r["value"], []),
+                headers=extra.get("headers", {}), cname_chain=extra.get("cname_chain", []),
+                resolves=extra.get("resolves"),
             ))
         ranked = prioritize(items)
         hyp = self.reasoner.hypotheses(self.config.program.name, ranked)
@@ -267,6 +300,7 @@ class Orchestrator:
         summary = RunSummary(mode=mode, program=self.config.program.name)
         self._recon(summary)
         if mode == "full":
+            self._dns_enrich(summary)
             self._enumerate(summary)
         if analyze:
             self._analyze(summary)

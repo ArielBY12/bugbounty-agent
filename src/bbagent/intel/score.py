@@ -7,11 +7,13 @@ from typing import Dict, List, Optional
 
 from bbagent.intel.signals import (
     Signal,
+    header_signals,
     param_signals,
     path_signals,
     server_signals,
     status_signal,
     subdomain_signals,
+    takeover_signal,
 )
 
 TIERS = [(18, "critical"), (11, "high"), (5, "medium"), (0, "low")]
@@ -25,6 +27,9 @@ class HostInput:
     probe_state: str = "unprobed"  # unprobed | live | dead
     paths: List[str] = field(default_factory=list)
     queries: List[str] = field(default_factory=list)  # raw URL query strings
+    headers: dict = field(default_factory=dict)       # response headers (CORS/redirect/tech)
+    cname_chain: List[str] = field(default_factory=list)
+    resolves: Optional[bool] = None                   # False = NXDOMAIN/no A (takeover hint)
 
 
 @dataclass
@@ -93,6 +98,10 @@ def score_host(item: HostInput) -> AssetPriority:
     signals.extend(server_signals(item.server))
     signals.extend(path_signals(item.paths))
     signals.extend(param_signals(item.queries))
+    signals.extend(header_signals(item.host, item.headers))
+    tk = takeover_signal(item.host, item.cname_chain, item.resolves)
+    if tk:
+        signals.append(tk)
     # Attack-surface size: many known paths hints at a richer target.
     if len(item.paths) >= 20:
         signals.append(Signal("surface", 2, f"{len(item.paths)} archived URLs (large surface)"))

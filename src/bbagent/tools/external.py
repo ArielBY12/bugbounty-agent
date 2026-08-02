@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from bbagent.tools.spec import tool_spec
 
@@ -82,3 +82,30 @@ class NucleiPlanner:
         ok, why = self.can_run()
         if not ok:
             raise EgressNotVerified(why)
+
+
+class NucleiExecutor:
+    """Spawns nuclei ONLY inside a verified egress sandbox, after human approval.
+
+    The ``runner`` is injectable (tests). On any real deployment it calls the sandboxed subprocess;
+    it is never reached unless (a) a human approved and (b) the egress guard's active probe passed.
+    """
+
+    def __init__(self, planner: NucleiPlanner, guard, runner: Optional[Callable] = None) -> None:
+        self.planner = planner
+        self.guard = guard
+        self._runner = runner
+
+    def run(self, targets_file: str, *, approval_ok: bool, tags: Optional[Sequence[str]] = None,
+            extra_flags: Sequence[str] = ()):
+        if not approval_ok:
+            raise EgressNotVerified("no valid human approval for the active scan")
+        ok, why = self.guard.verify_active()
+        if not ok:
+            raise EgressNotVerified(why)
+        argv = self.planner.build_argv(targets_file, tags=tags, extra_flags=extra_flags)
+        if self._runner is not None:
+            return self._runner(argv)
+        import subprocess  # noqa: PLC0415 - only reached inside a verified sandbox
+
+        return subprocess.run(argv, capture_output=True, text=True, shell=False, timeout=1800)  # noqa: S603

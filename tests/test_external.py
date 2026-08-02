@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from bbagent.tools.external import EgressNotVerified, ForbiddenFlag, NucleiPlanner
+from bbagent.tools.external import EgressNotVerified, ForbiddenFlag, NucleiExecutor, NucleiPlanner
+
+
+class _Guard:
+    def __init__(self, ok):
+        self._ok = ok
+
+    def verify_active(self):
+        return (self._ok, "ok" if self._ok else "not contained")
 
 
 def test_nuclei_argv_carries_safe_profile():
@@ -56,3 +64,22 @@ def test_plan_is_dry_run_only():
     assert plan["tool"] == "nuclei"
     assert plan["can_run"] in (True, False)  # renders argv without spawning
     assert plan["argv"][0] == "nuclei"
+
+
+def test_executor_refuses_without_verified_egress():
+    ex = NucleiExecutor(NucleiPlanner(), guard=_Guard(False))
+    with pytest.raises(EgressNotVerified):
+        ex.run("/t.txt", approval_ok=True)
+
+
+def test_executor_refuses_without_approval():
+    ex = NucleiExecutor(NucleiPlanner(), guard=_Guard(True))
+    with pytest.raises(EgressNotVerified):
+        ex.run("/t.txt", approval_ok=False)
+
+
+def test_executor_runs_when_verified_and_approved():
+    calls = {}
+    ex = NucleiExecutor(NucleiPlanner(), guard=_Guard(True), runner=lambda argv: calls.setdefault("argv", argv))
+    ex.run("/t.txt", approval_ok=True, tags=["cve"])
+    assert calls["argv"][0] == "nuclei" and "-exclude-tags" in calls["argv"]

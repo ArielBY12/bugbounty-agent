@@ -8,6 +8,7 @@ from bbagent.kernel.approval import (
     FixedGrantProvider,
     fingerprint,
 )
+from bbagent.kernel.auth import AuthProfile
 from bbagent.kernel.rate import RateGovernor
 
 
@@ -69,3 +70,15 @@ def test_rate_governor_narrow_only_lowers():
     n = g.narrowed(100.0, 2)  # request to raise rps is ignored; concurrency lowered
     assert n.rps == 10.0
     assert n.max_concurrency == 2
+
+
+def test_auth_profile_loads_and_redacts(tmp_path):
+    p = tmp_path / "auth.yaml"
+    p.write_text("headers:\n  Cookie: 'session=secret'\n")
+    prof = AuthProfile.load(p)
+    assert prof.headers["Cookie"] == "session=secret"
+    assert prof.redacted() == {"Cookie": "<redacted>"}  # values never exposed
+
+
+def test_auth_profile_empty_when_missing(tmp_path):
+    assert AuthProfile.load(tmp_path / "nope.yaml").is_empty()

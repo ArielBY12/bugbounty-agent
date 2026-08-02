@@ -19,6 +19,7 @@ from rich.table import Table
 
 from bbagent.importer import import_from_file, import_from_url
 from bbagent.kernel.approval import ApprovalRequest, CLIApprovalProvider
+from bbagent.kernel.auth import AuthProfile
 from bbagent.orchestrator import Orchestrator
 from bbagent.scope.loader import ScopeError, load_scope
 from bbagent.scope.serialize import scope_to_yaml
@@ -85,10 +86,18 @@ def _load(scope: pathlib.Path):
         raise typer.Exit(code=1)
 
 
-def _run(scope: pathlib.Path, mode: str, out: Optional[pathlib.Path], approval) -> None:
+def _load_auth(path: Optional[pathlib.Path]):
+    profile = AuthProfile.load(path)
+    if not profile.is_empty():
+        console.print(f"[yellow]auth: attaching {sorted(profile.headers)} to in-scope hosts only.[/]")
+        return profile
+    return None
+
+
+def _run(scope: pathlib.Path, mode: str, out: Optional[pathlib.Path], approval, auth=None) -> None:
     config = _load(scope)
     out = out or pathlib.Path("findings") / _slug(config.program.name)
-    orch = Orchestrator(config, out, approval_provider=approval)
+    orch = Orchestrator(config, out, approval_provider=approval, auth=auth)
     console.print(f"[cyan]Running {mode} on[/] {config.program.name}  →  {out}")
     summary = orch.run(mode=mode)
     orch.close()
@@ -107,12 +116,13 @@ def recon(
         "(scope.authorized + active_actions_allowed) AND you approve each step; otherwise it "
         "safely stops after passive recon.",
     ),
+    auth: Optional[pathlib.Path] = typer.Option(None, help="Path to auth.yaml for authenticated active probing."),
 ) -> None:
     """Recon. Passive by default (zero target contact); add --active for gated active enumeration."""
     if active:
         provider = CLIApprovalProvider(render=_render_approval)
         console.print("[yellow]--active: active enumeration will run only if authorized and approved per step.[/]")
-        _run(scope, "full", out, approval=provider)
+        _run(scope, "full", out, approval=provider, auth=_load_auth(auth))
     else:
         _run(scope, "recon", out, approval=None)
 
@@ -121,18 +131,36 @@ def recon(
 def run(
     scope: pathlib.Path = typer.Option(pathlib.Path("config/scope.yaml"), help="Path to scope.yaml."),
     out: Optional[pathlib.Path] = typer.Option(None, help="Findings store directory."),
+    auth: Optional[pathlib.Path] = typer.Option(None, help="Path to auth.yaml for authenticated active probing."),
 ) -> None:
     """Full pipeline: recon, then ACTIVE enumeration. Each active step prompts you for approval."""
     provider = CLIApprovalProvider(render=_render_approval)
-    _run(scope, "full", out, approval=provider)
+    _run(scope, "full", out, approval=provider, auth=_load_auth(auth))
+
+
+@app.command("plan-scan")
+def plan_scan(
+    scope: pathlib.Path = typer.Option(pathlib.Path("config/scope.yaml"), help="Path to scope.yaml."),
+    tags: Optional[str] = typer.Option(None, help="Comma-separated nuclei tags (intersected with the allowlist)."),
+) -> None:
+    """Show the exact gated nuclei command (dry-run). It will not run without a verified egress sandbox."""
+    _load(scope)  # validate scope first
+    from bbagent.tools.external import NucleiPlanner
+
+    taglist = tags.split(",") if tags else None
+    plan = NucleiPlanner().plan("<sandbox>/targets.txt", tags=taglist)
+    console.print(Panel(" ".join(plan["argv"]), title="nuclei — safe profile (dry-run)", border_style="yellow"))
+    color = "green" if plan["can_run"] else "red"
+    console.print(f"can run now: [{color}]{plan['can_run']}[/] — {plan['reason']}")
 
 
 @app.command("map")
 def map_cmd(
     scope: pathlib.Path = typer.Option(pathlib.Path("config/scope.yaml"), help="Path to scope.yaml."),
     out: Optional[pathlib.Path] = typer.Option(None, help="Findings store directory."),
-    active: bool = typer.Option(False, "--active", "-a", help="Also run gated active liveness (if authorized)."),
+    active: bool = typer.Option(False, "--active", "-a", help="Also run gated active liveness + DNS/takeover (if authorized)."),
     llm: bool = typer.Option(False, help="Add LLM hypotheses (needs anthropic + ANTHROPIC_API_KEY)."),
+    auth: Optional[pathlib.Path] = typer.Option(None, help="Path to auth.yaml for authenticated active probing."),
 ) -> None:
     """Recon (+ optional active), then rank the attack surface into a prioritized FOCUS MAP."""
     config = _load(scope)
@@ -150,7 +178,8 @@ def map_cmd(
 
         reasoner = DeterministicReasoner()
     provider = CLIApprovalProvider(render=_render_approval) if active else None
-    orch = Orchestrator(config, out, reasoner=reasoner, approval_provider=provider)
+    orch = Orchestrator(config, out, reasoner=reasoner, approval_provider=provider,
+                        auth=_load_auth(auth) if active else None)
     console.print(f"[cyan]Mapping[/] {config.program.name} (active={active})  →  {out}")
     summary = orch.run(mode="full" if active else "recon", analyze=True)
     orch.close()

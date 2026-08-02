@@ -84,12 +84,26 @@ bbagent map --scope config/scope.yaml --llm        # + LLM hypotheses (needs ANT
 ```
 
 `map` runs recon (subdomains from crt.sh/subfinder **and** archived URLs from Wayback/gau), then
-**ranks every in-scope host** by attack-surface signals — subdomain naming (`admin`, `dev`,
-`internal`, `jenkins`, `git`, `graphql`…), live status (401/403/500), server/tech, and exposed
-paths (`/.git/`, `/.env`, `/actuator/env`, `/swagger`, sensitive file extensions). It writes
-`findings/<program>/focus-map.md`: hosts grouped into 🔴 critical / 🟠 high / 🟡 medium, each with
-**why** it ranked and **non-destructive next steps** (and optional LLM hypotheses). This is the
-"start here" map — it does the tedious triage so your human creativity goes to the interesting hosts.
+**ranks every in-scope host** by attack-surface signals:
+- subdomain naming (`admin`, `dev`, `internal`, `jenkins`, `git`, `graphql`…), live status (401/403/500), server/tech;
+- exposed paths (`/.git/`, `/.env`, `/actuator/env`, `/swagger`, sensitive file extensions, JS files, cloud buckets);
+- **URL query parameters** → IDOR / SSRF / LFI / injection leads;
+- **CORS misconfig** (credentialed cross-origin) and **off-host redirects** (open-redirect), from response headers (active mode);
+- **version → CVE** (e.g. Apache 2.4.49 → CVE-2021-41773);
+- **dangling-CNAME subdomain takeover** (a CNAME to S3/Netlify/Heroku/… that no longer resolves — active mode).
+
+It writes `findings/<program>/focus-map.md`: hosts grouped into 🔴 critical / 🟠 high / 🟡 medium,
+each with **why** it ranked and **non-destructive next steps** (and optional LLM hypotheses). This
+is the "start here" map — it does the tedious triage so your creativity goes to the interesting hosts.
+
+**Authenticated scanning:** copy `config/auth.example.yaml` → `config/auth.yaml` (git-ignored),
+add a low-priv test cookie/token, and pass `--auth config/auth.yaml`. Credentials are attached
+**only** to in-scope, IP-pinned hosts (never out-of-scope; no redirect following), and their values
+are never logged.
+
+**Templated scanning (nuclei):** `bbagent plan-scan` renders the exact safe-profile command
+(dry-run). Actually spawning it requires a verified egress sandbox (Linux netns/nftables); until
+then it refuses to run (fail-closed) — see Limitations.
 
 ---
 
@@ -148,8 +162,13 @@ the exact scope decision that permitted it.
   exact gated command and **refuses to spawn** unless egress is verified
   (`BBAGENT_EGRESS_VERIFIED=1` in a real Linux netns/nftables sandbox). Until you wire that sandbox
   it is dry-run only. The built-in liveness probe is the safe active step that ships working.
-- **Authenticated scanning** (cookies/tokens/logged-in flows) is **not** implemented — this is
-  unauthenticated recon/enumeration only.
+- **Actually spawning external tools** (nuclei) needs the binary installed **and** a Linux
+  netns/nftables egress sandbox that sets `BBAGENT_EGRESS_VERIFIED=1` only after the guard's active
+  containment probe passes. On macOS / un-sandboxed hosts it stays dry-run (fail-closed) — the
+  built-in liveness probe + DNS enrichment are the active steps that ship working everywhere.
+- **Subdomain-takeover** detection is DNS-based (dangling CNAME to a known provider). It flags
+  candidates; confirming the takeover (fingerprinting the provider response) is a gated active step
+  you do next, guided by the map's suggested action.
 - **Scope nuance:** natural-language `out_of_scope.notes` (e.g. "no payment endpoints") are surfaced
   at approval time but are not machine-enforced. Read them.
 
@@ -164,7 +183,8 @@ bbagent verify-scope config/scope.yaml --atom target.acme.com
 bbagent recon --scope config/scope.yaml            # passive
 bbagent recon --scope config/scope.yaml --active   # + gated active enum (if authorized)
 bbagent map   --scope config/scope.yaml            # -> ranked focus-map.md (where to look first)
-bbagent map   --scope config/scope.yaml --active   # + gated liveness; --llm for hypotheses
+bbagent map   --scope config/scope.yaml --active   # + liveness/DNS/takeover; --llm hypotheses; --auth for logged-in
 bbagent run   --scope config/scope.yaml            # same full pipeline
+bbagent plan-scan --scope config/scope.yaml        # exact gated nuclei command (dry-run)
 pytest -q                                          # run the test suite
 ```

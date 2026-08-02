@@ -12,8 +12,8 @@ from __future__ import annotations
 import http.client
 import socket
 import ssl
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -25,6 +25,7 @@ class ProbeResult:
     scheme: str = "https"
     server: Optional[str] = None
     error: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
 
 
 def resolve_ips(host: str, timeout: float = 5.0) -> List[str]:
@@ -36,8 +37,20 @@ def resolve_ips(host: str, timeout: float = 5.0) -> List[str]:
     return sorted({info[4][0] for info in infos})
 
 
-def http_liveness(host: str, ip: str, *, scheme: str = "https", timeout: float = 8.0) -> ProbeResult:
-    """One HEAD request to the pinned ``ip`` with ``Host: host``. No redirect following."""
+def http_liveness(
+    host: str,
+    ip: str,
+    *,
+    scheme: str = "https",
+    timeout: float = 8.0,
+    auth_headers: Optional[Dict[str, str]] = None,
+) -> ProbeResult:
+    """One HEAD request to the pinned ``ip`` with ``Host: host``. No redirect following.
+
+    ``auth_headers`` (cookies/tokens) are attached ONLY here, to this single request to an
+    already-scope-validated, IP-pinned host. Because redirects are not followed, credentials
+    cannot leak to a redirect target. The caller must never pass auth for a non-in-scope host.
+    """
     try:
         if scheme == "https":
             ctx = ssl.create_default_context()
@@ -49,10 +62,13 @@ def http_liveness(host: str, ip: str, *, scheme: str = "https", timeout: float =
         conn.putrequest("HEAD", "/", skip_host=True)
         conn.putheader("Host", host)
         conn.putheader("User-Agent", "bbagent/0.1")
+        for k, v in (auth_headers or {}).items():
+            conn.putheader(k, v)
         conn.endheaders()
         resp = conn.getresponse()
-        server = resp.getheader("Server")
+        headers = {str(k).lower(): v for k, v in resp.getheaders()}
         conn.close()
-        return ProbeResult(host=host, ip=ip, alive=True, status_code=resp.status, scheme=scheme, server=server)
+        return ProbeResult(host=host, ip=ip, alive=True, status_code=resp.status, scheme=scheme,
+                           server=headers.get("server"), headers=headers)
     except Exception as exc:  # noqa: BLE001 - any failure = not-live, never crash
         return ProbeResult(host=host, ip=ip, alive=False, scheme=scheme, error=str(exc))

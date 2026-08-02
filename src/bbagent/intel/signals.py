@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from bbagent.scope.canonical import CanonicalizationError, host_from_url
 
 # ---- subdomain-name signals (matched against dot/hyphen-split labels) --------------------
 SUBDOMAIN_TOKENS: Dict[str, Tuple[int, str]] = {
@@ -175,9 +177,23 @@ PARAM_SIGNALS: Dict[str, Tuple[int, str]] = {
     "run": (8, "command execution"), "ping": (8, "command execution"),
 }
 
-# ---- version -> known-CVE table (tiny, illustrative; extend as needed) -------------------
-_VULN_VERSIONS: Dict[str, List[Tuple[Tuple[str, ...], str]]] = {
-    "apache": [(("2.4.49", "2.4.50"), "CVE-2021-41773/42013 (path traversal -> RCE)")],
+# ---- version -> known-CVE ranges (curated, high-confidence) ------------------------------
+# (product, min_inclusive, max_inclusive, note). Version tuples compared element-wise.
+_VULN_RANGES: List[Tuple[str, tuple, tuple, str]] = [
+    ("apache", (2, 4, 49), (2, 4, 50), "CVE-2021-41773/42013 (path traversal -> RCE)"),
+    ("tomcat", (0,), (9, 0, 30), "Ghostcat CVE-2020-1938 (AJP file read/RCE)"),
+    ("jetty", (0,), (9, 4, 40), "older Jetty — check CVE-2021-28164/28169"),
+]
+
+# CNAME targets that indicate a takeover-prone third-party service.
+_TAKEOVER_PROVIDERS: Dict[str, str] = {
+    "s3.amazonaws.com": "AWS S3", ".github.io": "GitHub Pages", "herokudns.com": "Heroku",
+    "herokuapp.com": "Heroku", ".azurewebsites.net": "Azure", "cloudapp.net": "Azure",
+    "trafficmanager.net": "Azure", ".netlify.app": "Netlify", ".fastly.net": "Fastly",
+    ".ghost.io": "Ghost", ".surge.sh": "Surge", ".bitbucket.io": "Bitbucket",
+    ".zendesk.com": "Zendesk", ".statuspage.io": "Statuspage", ".readthedocs.io": "ReadTheDocs",
+    ".wpengine.com": "WP Engine", ".pantheonsite.io": "Pantheon", ".unbouncepages.com": "Unbounce",
+    ".myshopify.com": "Shopify", ".desk.com": "Desk",
 }
 
 # ---- HTTP status signals ----------------------------------------------------------------
@@ -303,15 +319,22 @@ def _server_tokens(server: str) -> set:
     return {t for t in re.split(r"[/ ,;()]+", server.lower()) if t}
 
 
-def _version_cve(server: str) -> Optional[str]:
-    m = re.search(r"([a-z][a-z-]+)/(\d[\d.]*)", server.lower())
+def _vtuple(version: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", version)[:4])
+
+
+def _version_finding(banner: str) -> Optional[Tuple[int, str]]:
+    """Parse ``product/version`` from a banner. Return (weight, note): high for a known-vuln
+    range, low for a mere version disclosure."""
+    m = re.search(r"([a-z][a-z0-9-]*[a-z])/(\d[\d.]*)", banner.lower())
     if not m:
         return None
-    product, version = m.group(1), m.group(2)
-    for versions, note in _VULN_VERSIONS.get(product, []):
-        if version in versions:
-            return note
-    return None
+    product, ver = m.group(1), m.group(2)
+    vt = _vtuple(ver)
+    for prod, lo, hi, note in _VULN_RANGES:
+        if product == prod and lo <= vt <= hi:
+            return (9, f"{product} {ver}: {note} — version-confirm, then match CVE (read-only)")
+    return (2, f"version disclosed: {product} {ver} — check CVEs for this version")
 
 
 def server_signals(server: Optional[str]) -> List[Signal]:
@@ -323,7 +346,65 @@ def server_signals(server: Optional[str]) -> List[Signal]:
     for needle, weight, why in SERVER_SIGNALS:
         if weight > 0 and needle in tokens:
             out.append(Signal("server", weight, f"Server '{server}': {why}"))
-    cve = _version_cve(server)
-    if cve:
-        out.append(Signal("server", 9, f"Server '{server}': {cve} — version-confirm, then match CVE (read-only)"))
+    vf = _version_finding(server)
+    if vf:
+        out.append(Signal("server", vf[0], f"Server '{server}': {vf[1]}"))
     return out
+
+
+def _origin_host(value: str) -> Optional[str]:
+    try:
+        return host_from_url(value) if "://" in value else host_from_url("http://" + value)
+    except CanonicalizationError:
+        return None
+
+
+def header_signals(host: str, headers: Optional[dict]) -> List[Signal]:
+    """CORS / open-redirect / tech-disclosure signals from response headers (active probe)."""
+    if not headers:
+        return []
+    h = {str(k).lower(): v for k, v in headers.items()}
+    out: List[Signal] = []
+    acao = (h.get("access-control-allow-origin") or "").strip()
+    acac = str(h.get("access-control-allow-credentials", "")).strip().lower() == "true"
+    if acao:
+        if acac and acao.lower() not in ("", "null"):
+            out.append(Signal("header", 8, f"CORS: ACAO={acao} + Allow-Credentials — credentialed cross-origin",
+                              action="Test cross-origin credentialed read from an attacker origin (read-only)"))
+        elif acao == "*":
+            out.append(Signal("header", 3, "CORS: ACAO=* (wildcard)"))
+        else:
+            oh = _origin_host(acao)
+            if oh and oh != host:
+                out.append(Signal("header", 5, f"CORS reflects origin {acao}",
+                                  action="Check whether ACAO reflects an arbitrary Origin (read-only)"))
+    xpb = h.get("x-powered-by")
+    if xpb:
+        out.append(Signal("header", 3, f"X-Powered-By: {xpb} (tech/version disclosed)"))
+        vf = _version_finding(str(xpb))
+        if vf and vf[0] == 9:
+            out.append(Signal("header", 9, f"X-Powered-By {xpb}: {vf[1]}"))
+    loc = h.get("location")
+    if loc:
+        lh = _origin_host(str(loc))
+        if lh and lh != host:
+            out.append(Signal("header", 5, f"redirects off-host to {lh} (open-redirect / scope lead)",
+                              action="Test whether the redirect target is user-controllable (read-only)"))
+    return out
+
+
+def takeover_signal(host: str, cname_chain: Optional[Sequence[str]], resolves: Optional[bool]) -> Optional[Signal]:
+    """Dangling-CNAME subdomain-takeover signal. ``resolves`` False = NXDOMAIN/no A record."""
+    if not cname_chain:
+        return None
+    target = str(cname_chain[-1]).lower().rstrip(".")
+    for suffix, provider in _TAKEOVER_PROVIDERS.items():
+        if target.endswith(suffix) or suffix.strip(".") == target:
+            if resolves is False:
+                return Signal("takeover", 9,
+                             f"dangling CNAME -> {target} ({provider}), does not resolve — possible subdomain takeover",
+                             action=f"Fingerprint {target} against can-i-take-over-xyz signatures (read-only)")
+            return Signal("takeover", 4,
+                         f"CNAME -> {target} ({provider}) — confirm the resource is claimed",
+                         action=f"If {provider} returns 404/no-such-resource, likely takeover (read-only)")
+    return None
